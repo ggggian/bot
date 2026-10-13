@@ -186,7 +186,7 @@ describe("network detector utilities", () => {
         ),
         async (input: string) => {
           const result = NetworkDetector.resolveNetworkInput(input);
-          if (input.includes("example.com")) {
+          if (input === "https://example.com") {
             expect(result).toBe("mainnet");
           } else if (input.includes("devnet")) {
             expect(result).toBe("devnet");
@@ -200,6 +200,64 @@ describe("network detector utilities", () => {
         },
       ),
       { seed: 7070, numRuns: 20 },
+    );
+  });
+});
+
+describe("RPC hostname detection", () => {
+  test("RPC credentials cannot redirect the default explorer link to another cluster", () => {
+    const original = process.env.SOLANA_NETWORK;
+    try {
+      process.env.SOLANA_NETWORK = "https://api.mainnet-beta.solana.com?api-key=devnet";
+      expect(NetworkDetector.getCurrentNetwork()).toBe("mainnet");
+      expect(NetworkDetector.buildSolscanTxUrl("synthetic-signature")).toBe(
+        "https://solscan.io/tx/synthetic-signature",
+      );
+    } finally {
+      process.env.SOLANA_NETWORK = original;
+    }
+  });
+
+  test.each([
+    ["https://devnet.helius-rpc.com", "devnet", "Devnet"],
+    ["https://solana-testnet.g.alchemy.com", "testnet", "Testnet"],
+    ["https://mainnet.helius-rpc.com", "mainnet", "Mainnet"],
+    ["https://api.solana.com", "mainnet", "Mainnet"],
+    ["https://api.solana.com.", "mainnet", "Mainnet"],
+    ["http://localhost.:8899", "localnet", "Localnet"],
+    ["http://[::1]:8899", "localnet", "Localnet"],
+    ["https://API.DEVNET.SOLANA.COM", "devnet", "Devnet"],
+    ["https://notdevnet.example.invalid", "mainnet", "Custom Network"],
+    ["https://api.solana.com.evil.invalid", "mainnet", "Custom Network"],
+    ["https://evil-api.solana.com", "mainnet", "Custom Network"],
+    ["https://rpc.example.invalid/api.solana.com", "mainnet", "Custom Network"],
+    ["https://localhost.evil.invalid", "mainnet", "Custom Network"],
+    ["not a URL containing devnet", "mainnet", "Custom Network"],
+    ["ftp://api.devnet.solana.com", "mainnet", "Custom Network"],
+  ] as const)("classifies %s from its host", (url, network, display) => {
+    expect(NetworkDetector.detectNetwork(url)).toBe(network);
+    expect(NetworkDetector.getDisplayNameFromRpc(url)).toBe(display);
+  });
+
+  test("credentials, paths, queries and fragments cannot change a cluster (property)", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(
+          ["api.mainnet-beta.solana.com", "mainnet", "Mainnet"],
+          ["api.devnet.solana.com", "devnet", "Devnet"],
+          ["api.testnet.solana.com", "testnet", "Testnet"],
+          ["127.0.0.1", "localnet", "Localnet"],
+          ["rpc.example.invalid", "mainnet", "Custom Network"],
+        ),
+        fc.string({ maxLength: 80 }),
+        ([host, network, display], arbitrary) => {
+          const noise = encodeURIComponent(`devnet-testnet-localhost-api.solana.com-${arbitrary}`);
+          const url = `https://${noise}:password@${host}/${noise}?api-key=${noise}#${noise}`;
+          expect(NetworkDetector.detectNetwork(url)).toBe(network);
+          expect(NetworkDetector.getDisplayNameFromRpc(url)).toBe(display);
+        },
+      ),
+      { seed: 7071, numRuns: 200 },
     );
   });
 });
