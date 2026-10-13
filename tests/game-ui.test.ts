@@ -6,6 +6,10 @@ import {
   buildPrizeLine,
   buildParticipantsList,
   buildWinnerPrizeDetails,
+  buildUserMention,
+  buildChallengeHeader,
+  buildChallengeStatus,
+  buildPlayerProfileLink,
 } from "../src/utils/game-ui";
 
 test("buildGameStatus before minimum", () => {
@@ -116,4 +120,56 @@ test("buildParticipantsList escapes markup in usernames", () => {
   expect(list).toContain("2. user &amp; co");
   expect(list).not.toContain("<b>bold</b>");
   expect(list).not.toContain("user & co");
+});
+
+test("buildUserMention links the account id and escapes the name", () => {
+  expect(buildUserMention("5150", "Ana <Paz>")).toBe(
+    '<a href="tg://user?id=5150">Ana &lt;Paz&gt;</a>',
+  );
+});
+
+test("buildChallengeHeader names both players while waiting for the answer", () => {
+  expect(
+    buildChallengeHeader(
+      "10.000000",
+      "TIMBA",
+      "@creator",
+      '<a href="tg://user?id=5150">Ana</a>',
+      false,
+      "$12.3",
+      "https://solscan.io/account/AbCdEf",
+    ),
+  ).toBe(
+    '<b>⚔️ Challenge <a href="https://solscan.io/account/AbCdEf">🔎</a> • 10 TIMBA ($12.3)</b>\n' +
+      '@creator challenged <a href="tg://user?id=5150">Ana</a>',
+  );
+});
+
+test("buildChallengeHeader shows the match once accepted, with the creator's wallet link", () => {
+  expect(
+    buildChallengeHeader(
+      "10.000000",
+      "TIMBA",
+      "ignored",
+      "Ana",
+      true,
+      undefined,
+      undefined,
+      "So11111111111111111111111111111111111111112",
+    ),
+  ).toBe(
+    "<b>⚔️ Challenge 🔎 • 10 TIMBA</b>\n" +
+      `${buildPlayerProfileLink("So11111111111111111111111111111111111111112")} vs Ana`,
+  );
+});
+
+test("buildChallengeHeader escapes the creator name", () => {
+  expect(buildChallengeHeader("1", "SOL", "<b>x</b>", "Ana", false)).toBe(
+    "<b>⚔️ Challenge 🔎 • 1 SOL</b>\n&lt;b&gt;x&lt;/b&gt; challenged Ana",
+  );
+});
+
+test("buildChallengeStatus waits for the challenged player, then for the draw", () => {
+  expect(buildChallengeStatus(false, "Ana")).toBe("Waiting for Ana to accept");
+  expect(buildChallengeStatus(true, "Ana")).toBe("Accepted, drawing soon");
 });

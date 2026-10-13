@@ -1,6 +1,7 @@
 import type { PublicKey } from "#solana";
 import type { AuthorizationResult, OracleStats } from "../types";
 import { GameDatabase } from "./game-database";
+import { challengeForSomeoneElseMessage } from "./game-challenge";
 import type { WalletManager } from "./wallet";
 import { loadOracleApiToken } from "./secrets";
 import { createRestClient, expectStatus, ProtocolHttpError } from "@timbagame/protocol/common";
@@ -302,7 +303,11 @@ export class OracleClient {
   // PRIVATE GAME AUTHORIZATION (kept for private games)
   // ================================
 
-  public async authorizePlayer(gamePda: PublicKey, chatId: number): Promise<AuthorizationResult> {
+  public async authorizePlayer(
+    gamePda: PublicKey,
+    chatId: number,
+    telegramId: bigint,
+  ): Promise<AuthorizationResult> {
     try {
       const game = this.gameDb.getGame(gamePda.toBase58());
       if (!game) {
@@ -314,6 +319,13 @@ export class OracleClient {
           authorized: false,
           error: "Player not in same chat as game creator",
         };
+      }
+
+      // The operator signature is the on-chain gate: withholding it keeps
+      // everyone but the challenged player out, whichever client they use.
+      const challenge = this.gameDb.getGameChallenge(gamePda.toBase58());
+      if (challenge && challenge.telegramId !== telegramId.toString()) {
+        return { authorized: false, error: challengeForSomeoneElseMessage(challenge) };
       }
 
       // Private games require the shared operator keypair for authorization.

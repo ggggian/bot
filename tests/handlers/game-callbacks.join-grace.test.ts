@@ -28,6 +28,7 @@ const makeModule = (joinGame: (...args: any[]) => Promise<any>) => {
     gameDb: {
       getGame: () => ({ game_address: "unused", status: "active" }),
       savePlayerMapping: vi.fn(),
+      getGameChallenge: () => null,
     } as any,
     wrapCallbackHandler: (handler) => async (ctx, next) => handler(ctx, next),
     withCreatorContext: passthrough,

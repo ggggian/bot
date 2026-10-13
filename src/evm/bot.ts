@@ -1,4 +1,5 @@
 import { parseGameCommandInput } from "../handlers/game-command-input";
+import { resolveChallengeTarget } from "../utils/game-challenge";
 import { registerEvmSetup } from "./setup";
 import { inferMaxPlayers } from "../utils/arg-parsing";
 import { buildWalletCaption } from "../utils/wallet-ui";
@@ -396,6 +397,14 @@ export function registerEvmBot(
     registerGameCommand(command, async (ctx) => {
       try {
         if (store.action(String(ctx.update.update_id))) return;
+        // EVM games have no challenge support; never open one to everyone instead.
+        if (
+          gameType === 0 &&
+          (ctx.message?.external_reply || resolveChallengeTarget(ctx.message, BigInt(user(ctx))))
+        ) {
+          await ctx.reply("Challenges only work with Solana tokens.");
+          return;
+        }
         if (store.pending().some((action) => action.user === user(ctx))) {
           await ctx.reply(
             `Your ${config.name} wallet still has a transaction awaiting confirmation.`,

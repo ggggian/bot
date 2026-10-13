@@ -15,6 +15,7 @@ import type { ChatGameSettings, ParseAmountResult } from "../types";
 import type { CoinflipDeps, GameTokenOverride } from "./game";
 import type { GameSetupCopy } from "./game-setup";
 import { containsBalanceInfo } from "../utils/context-helpers";
+import { CHALLENGE_PLAYERS, resolveChallengeTarget } from "../utils/game-challenge";
 
 export type CreateGameViaCommandOptions = {
   gameType: "coinflip" | "giveaway";
@@ -221,7 +222,9 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
         return;
       }
 
-      const maxPlayers = inferred.value;
+      const challenge =
+        options.gameType === "coinflip" ? resolveChallengeTarget(ctx.message, telegramId) : null;
+      const maxPlayers = challenge ? CHALLENGE_PLAYERS : inferred.value;
       const tokenMetadata = await createDeps.wallet.getTokenMetadata(parsedAmount.tokenMint);
       const { raw: minAmountRaw } = await createDeps.getTokenPolicyMinimumAmount(
         parsedAmount.tokenMint,
@@ -284,7 +287,11 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
 
       // Force public visibility for DM-created games
       const isFromDM = ctx.chat?.type === "private";
-      const isPrivate = isFromDM ? false : resolveGamePrivacy(options.gameType, chatSettings);
+      const isPrivate = challenge
+        ? true
+        : isFromDM
+          ? false
+          : resolveGamePrivacy(options.gameType, chatSettings);
 
       const creationMessage = await ctx.reply("⏳ Creating game…");
       if (creationMessage?.chat?.id != null && creationMessage?.message_id != null) {
@@ -312,6 +319,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
           isPrivate,
           replyToMessageId: ctx.message?.message_id,
           creationMessageId: creationMessageInfo?.messageId,
+          ...(challenge ? { challenge } : {}),
         },
         ctx.chat?.id || 0,
         messageTimestampMs,

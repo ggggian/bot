@@ -1,4 +1,4 @@
-import { beforeEach, afterAll, describe, expect, test } from "bun:test";
+import { beforeEach, afterAll, afterEach, describe, expect, test } from "bun:test";
 import { OracleClient } from "../src/utils/oracle";
 import { GameDatabase } from "../src/utils/game-database";
 import { PublicKey } from "#solana";
@@ -150,13 +150,82 @@ describe("OracleClient", () => {
 
     // Ensure no game exists yet
     expect(db.getGame(gameAddr)).toBeNull();
-    const res1 = await oc.authorizePlayer(new PublicKey(gameAddr), 1234);
+    const res1 = await oc.authorizePlayer(new PublicKey(gameAddr), 1234, 7n);
     expect(res1.authorized).toBe(false);
 
     // Save a game with a different chatId, so mismatch triggers false
     db.saveGame(gameAddr, "42", 100, "coinflip", undefined, undefined, 2, 2, 9999);
-    const res2 = await oc.authorizePlayer(new PublicKey(gameAddr), 1234);
+    const res2 = await oc.authorizePlayer(new PublicKey(gameAddr), 1234, 7n);
     expect(res2.authorized).toBe(false);
+  });
+
+  describe("authorizePlayer on a challenge", () => {
+    const CHAT_ID = -100777;
+    const operatorKeypair = { publicKey: "synthetic-operator" };
+    let keyReads = 0;
+    let savedFields: { gameDb: unknown; wallet: unknown } | undefined;
+    // The client is a process-wide singleton: point it at this test's database
+    // and operator, then put the previous ones back.
+    const client = () => {
+      const oc = OracleClient.getInstance() as any;
+      savedFields = { gameDb: oc.gameDb, wallet: oc.wallet };
+      oc.gameDb = GameDatabase.getInstance();
+      oc.wallet = {
+        getOperatorKeypair: async () => {
+          keyReads += 1;
+          return operatorKeypair;
+        },
+      };
+      return oc as OracleClient;
+    };
+    const challengeGame = () => {
+      const db = GameDatabase.getInstance();
+      const address = new PublicKey("SysvarC1ock11111111111111111111111111111111").toBase58();
+      db.saveGame(address, "41", 100, "coinflip", undefined, undefined, 2, 2, CHAT_ID);
+      db.saveGameChallenge(address, { telegramId: "5150", displayName: "@rival" });
+      return new PublicKey(address);
+    };
+
+    beforeEach(() => {
+      keyReads = 0;
+    });
+    afterEach(() => {
+      if (!savedFields) return;
+      Object.assign(OracleClient.getInstance() as any, savedFields);
+      savedFields = undefined;
+    });
+
+    test("signs for the challenged player", async () => {
+      const oc = client();
+      const gamePda = challengeGame();
+      expect(await oc.authorizePlayer(gamePda, CHAT_ID, 5150n)).toEqual({
+        authorized: true,
+        operatorKeypair: operatorKeypair as any,
+      });
+    });
+
+    test("refuses anyone else in the same chat, before touching the operator key", async () => {
+      const oc = client();
+      const gamePda = challengeGame();
+      expect(await oc.authorizePlayer(gamePda, CHAT_ID, 6160n)).toEqual({
+        authorized: false,
+        error: "This challenge is for @rival.",
+      });
+      expect(keyReads).toBe(0);
+    });
+
+    test("refuses when the challenge cannot be read", async () => {
+      const oc = client();
+      const gamePda = challengeGame();
+      const db = GameDatabase.getInstance();
+      db.getGameChallenge = () => {
+        throw new Error("synthetic-read-failure");
+      };
+      const result = await oc.authorizePlayer(gamePda, CHAT_ID, 5150n);
+      expect(result.authorized).toBe(false);
+      expect(result.operatorKeypair).toBeUndefined();
+      expect(keyReads).toBe(0);
+    });
   });
 
   test("setOracleUrl changes the URL reported and used for requests", async () => {

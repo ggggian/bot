@@ -443,3 +443,73 @@ describe("handleGiveawayCommand", () => {
     expect(replies).toEqual(["❌ Error setting up giveaway game. Please try again."]);
   });
 });
+
+describe("createGameViaCommand as a reply", () => {
+  const replyingTo = (ctx: any, from: Record<string, unknown>) => {
+    ctx.message.reply_to_message = { message_id: 9, from };
+    return ctx;
+  };
+  const createGameOptions = (gameManager: any) =>
+    (gameManager.createGame.mock.calls[0] as any[])[6] as Record<string, unknown>;
+
+  test("a coinflip replying to someone challenges them: private and one on one", async () => {
+    const { module, gameManager } = setup({
+      deps: { getChatGameSettings: () => ({ coinflip_default_privacy: "public" }) },
+    });
+    const { ctx } = makeCtx("/cf 5 TKN 6");
+    replyingTo(ctx, { id: 5150, is_bot: false, first_name: "Ana", username: "rival" });
+
+    await module.createGameViaCommand(
+      ctx,
+      ["/cf", "5", "TKN", "6"],
+      1n,
+      module.COINFLIP_COMMAND_OPTIONS,
+    );
+
+    const call = gameManager.createGame.mock.calls[0] as any[];
+    expect(call[2]).toBe(2);
+    expect(createGameOptions(gameManager)).toEqual({
+      isPrivate: true,
+      replyToMessageId: 10,
+      creationMessageId: 501,
+      challenge: { telegramId: "5150", displayName: "@rival" },
+    });
+  });
+
+  test("a coinflip replying to a bot stays a regular game", async () => {
+    const { module, gameManager } = setup({
+      deps: { getChatGameSettings: () => ({ coinflip_default_privacy: "public" }) },
+    });
+    const { ctx } = makeCtx("/cf 5 TKN 6");
+    replyingTo(ctx, { id: 7171, is_bot: true, first_name: "Bot" });
+
+    await module.createGameViaCommand(
+      ctx,
+      ["/cf", "5", "TKN", "6"],
+      1n,
+      module.COINFLIP_COMMAND_OPTIONS,
+    );
+
+    expect((gameManager.createGame.mock.calls[0] as any[])[2]).toBe(6);
+    expect(createGameOptions(gameManager)).toEqual({
+      isPrivate: false,
+      replyToMessageId: 10,
+      creationMessageId: 501,
+    });
+  });
+
+  test("a giveaway replying to someone is never a challenge", async () => {
+    const { module, gameManager } = setup();
+    const { ctx } = makeCtx("/ga 5 TKN");
+    replyingTo(ctx, { id: 5150, is_bot: false, first_name: "Ana" });
+
+    await module.createGameViaCommand(
+      ctx,
+      ["/ga", "5", "TKN"],
+      1n,
+      module.GIVEAWAY_COMMAND_OPTIONS,
+    );
+
+    expect(createGameOptions(gameManager)).not.toHaveProperty("challenge");
+  });
+});

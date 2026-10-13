@@ -72,18 +72,67 @@ export function buildGameHeader(
   explorerUrl?: string | null,
   creatorWalletAddress?: string | null,
 ): string {
+  return (
+    `${buildGameTitle(gameTypeLabel, amountFormatted, tokenTicker, usdApproximation, explorerUrl)}\n` +
+    `Creator: ${buildCreatorDisplay(creatorUsername, creatorWalletAddress)} • ${currentTickets}/${maxTickets} players`
+  );
+}
+
+function buildGameTitle(
+  gameTypeLabel: string,
+  amountFormatted: string,
+  tokenTicker: string,
+  usdApproximation?: string | null,
+  explorerUrl?: string | null,
+): string {
   const usdSegment = usdApproximation ? ` (${escapeHtml(usdApproximation)})` : "";
   const gameExplorerIcon = explorerUrl ? `<a href="${escapeHtml(explorerUrl)}">🔎</a>` : "🔎";
   const gameLabel = `${escapeHtml(gameTypeLabel)} ${gameExplorerIcon}`;
   const amountDisplay = escapeHtml(formatCompactTokenDisplay(amountFormatted));
   const tickerDisplay = escapeHtml(tokenTicker);
-  const creatorDisplay = creatorWalletAddress
+  return `<b>${gameLabel} • ${amountDisplay} ${tickerDisplay}${usdSegment}</b>`;
+}
+
+function buildCreatorDisplay(creatorUsername: string, creatorWalletAddress?: string | null) {
+  return creatorWalletAddress
     ? buildPlayerProfileLink(creatorWalletAddress)
     : escapeHtml(creatorUsername);
+}
+
+/**
+ * Mention by account id, so Telegram notifies the user even without a username.
+ */
+export function buildUserMention(telegramId: string, displayName: string): string {
+  return `<a href="tg://user?id=${telegramId}">${escapeHtml(displayName)}</a>`;
+}
+
+/**
+ * Header of a challenge coinflip. `challengedDisplay` is already HTML.
+ */
+export function buildChallengeHeader(
+  amountFormatted: string,
+  tokenTicker: string,
+  creatorUsername: string,
+  challengedDisplay: string,
+  accepted: boolean,
+  usdApproximation?: string | null,
+  explorerUrl?: string | null,
+  creatorWalletAddress?: string | null,
+): string {
+  const creatorDisplay = buildCreatorDisplay(creatorUsername, creatorWalletAddress);
   return (
-    `<b>${gameLabel} • ${amountDisplay} ${tickerDisplay}${usdSegment}</b>\n` +
-    `Creator: ${creatorDisplay} • ${currentTickets}/${maxTickets} players`
+    `${buildGameTitle("⚔️ Challenge", amountFormatted, tokenTicker, usdApproximation, explorerUrl)}\n` +
+    (accepted
+      ? `${creatorDisplay} vs ${challengedDisplay}`
+      : `${creatorDisplay} challenged ${challengedDisplay}`)
   );
+}
+
+/**
+ * Status of a challenge coinflip. `challengedName` is already HTML.
+ */
+export function buildChallengeStatus(accepted: boolean, challengedName: string): string {
+  return accepted ? "Accepted, drawing soon" : `Waiting for ${challengedName} to accept`;
 }
 
 /**

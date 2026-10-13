@@ -2272,3 +2272,107 @@ describe("GameManager.createGame", () => {
     resetGM();
   });
 });
+
+describe("GameManager.createGame for a challenge", () => {
+  const CHALLENGE = { telegramId: "5150", displayName: "@rival" };
+
+  const createChallenge = async (
+    saveGameChallenge: (address: string, challenge: unknown) => void,
+  ) => {
+    resetGM();
+    const events: string[] = [];
+    const wallet = makeWallet({
+      getTokenMetadata: async () => ({ decimals: 6 }),
+      getTokenBalance: async () => 2_000_000,
+      getBalance: async () => 3_000_000,
+      sendFullySignedGameTransaction: vi.fn(async () => {
+        events.push("broadcast");
+        return "SIG";
+      }),
+    });
+    const db = {
+      savePlayerMapping: () => {},
+      saveGame: vi.fn(),
+      saveGameParticipant: vi.fn(),
+      saveGameChallenge: vi.fn((address: string, challenge: unknown) => {
+        events.push("challenge");
+        saveGameChallenge(address, challenge);
+      }),
+      savePendingGameCreation: vi.fn((input: { state?: string }) => {
+        events.push(`persist:${input.state ?? "legacy"}`);
+      }),
+      claimPendingGameCreationSubmission: vi.fn(() => ({ acquired: true })),
+      finishPendingGameCreationSubmission: vi.fn(() => true),
+      countActiveGamesByCreator: () => 0,
+      countRecentGamesByCreator: () => 0,
+    } as any;
+    const program = makeProgram(wallet.connection);
+    const gm = getGameManager(program, wallet, db);
+    const signGameTransaction = vi.fn(async (txBase64: string) => {
+      events.push("oracle-sign");
+      return signGameTransactionAsOracle(txBase64);
+    });
+    (gm as any).oracleClient = {
+      requireTokenPolicy: async () => ({}),
+      isHealthy: async () => true,
+      generateGameSecrets: async () => ({
+        randomHash: "e".repeat(64),
+        oracleOperator: TEST_ORACLE.publicKey.toBase58(),
+      }),
+      signGameTransaction,
+      hexToBuffer: (hex: string) => Buffer.from(hex, "hex"),
+    };
+    (gm as any).resolveGameVaultAccounts = async () => ({
+      tokenProgram: TOKEN_PROGRAM_ID,
+      gameVault: (await Keypair.generate()).publicKey,
+      gameVaultTokenAccount: (await Keypair.generate()).publicKey,
+    });
+    (gm as any).deriveAta = async () => (await Keypair.generate()).publicKey;
+    (gm as any).confirmTransactionWithRecovery = async () => "SIG";
+
+    try {
+      const result = await gm.createGame(
+        "coinflip",
+        {
+          amount: 1_000_000,
+          tokenMint: PublicKey.default.toBase58(),
+          tokenTicker: "TIMBA",
+          isSol: false,
+        },
+        2,
+        2,
+        60,
+        1n,
+        { isPrivate: false, challenge: CHALLENGE },
+        8200,
+      );
+      return { result, events, db, signGameTransaction, program };
+    } finally {
+      resetGM();
+    }
+  };
+
+  test("saves the challenge before anything is signed or sent, and makes the game private", async () => {
+    const { result, events, db, program } = await createChallenge(() => {});
+
+    expect(result.success).toBe(true);
+    expect(db.saveGameChallenge).toHaveBeenCalledWith(result.gameAddress, CHALLENGE);
+    expect(events.slice(0, 3)).toEqual(["challenge", "oracle-sign", "persist:prepared"]);
+    expect(events).toContain("broadcast");
+    expect(db.savePendingGameCreation).toHaveBeenCalledWith(
+      expect.objectContaining({ state: "prepared", isPrivate: true }),
+    );
+    // The chain enforces the operator signature only for private games.
+    expect((program as any).__captures.initializeGameConfig.isPrivate).toBe(true);
+  });
+
+  test("creates nothing when the challenge cannot be saved", async () => {
+    const { result, events, signGameTransaction } = await createChallenge(() => {
+      throw new Error("synthetic-write-failure");
+    });
+
+    expect(result.success).toBe(false);
+    expect(events).toEqual(["challenge"]);
+    expect(signGameTransaction).not.toHaveBeenCalled();
+  });
+});
