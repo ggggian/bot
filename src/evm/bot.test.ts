@@ -116,7 +116,13 @@ const createHarness = async (
   } as const;
   const text = async (
     value: string,
-    options: { chat?: keyof typeof chats; from?: number; updateId?: number } = {},
+    options: {
+      chat?: keyof typeof chats;
+      from?: number;
+      updateId?: number;
+      replyTo?: Record<string, unknown>;
+      externalReply?: Record<string, unknown>;
+    } = {},
   ) => {
     const updateId = options.updateId ?? ++id;
     await bot.handleUpdate({
@@ -127,6 +133,8 @@ const createHarness = async (
         chat: chats[options.chat ?? "private"] as any,
         from: { id: options.from ?? 1, is_bot: false, first_name: "T" },
         text: value,
+        ...(options.replyTo ? { reply_to_message: options.replyTo as any } : {}),
+        ...(options.externalReply ? { external_reply: options.externalReply as any } : {}),
         entities: value.startsWith("/")
           ? [{ type: "bot_command", offset: 0, length: value.split(" ")[0]!.length }]
           : undefined,
@@ -471,6 +479,54 @@ describe("EVM wallet commands", () => {
 });
 
 describe("EVM game commands", () => {
+  test("a coinflip replying to someone is refused instead of opening an EVM game", async () => {
+    useEvm(-100);
+    await h.text("/cf 1 TEST", {
+      chat: "group",
+      replyTo: {
+        message_id: 3,
+        date: 0,
+        chat: { id: -100 },
+        from: { id: 5150, is_bot: false, first_name: "Ana" },
+      },
+    });
+    expect(h.replies().at(-1)).toBe("Challenges only work with Solana tokens.");
+    await h.text("/cf 1 TEST", { chat: "group" });
+    expect(h.replies().at(-1)).not.toBe(
+      "Your Anvil wallet still has a transaction awaiting confirmation.",
+    );
+  });
+
+  test("a coinflip replying to another chat or topic is refused too", async () => {
+    useEvm(-100);
+    await h.text("/cf 1 TEST", {
+      chat: "group",
+      externalReply: {
+        origin: {
+          type: "user",
+          date: 0,
+          sender_user: { id: 5150, is_bot: false, first_name: "Ana" },
+        },
+      },
+    });
+    expect(h.replies().at(-1)).toBe("Challenges only work with Solana tokens.");
+    expect(h.store.pending()).toEqual([]);
+  });
+
+  test("a giveaway replying to someone opens as usual", async () => {
+    useEvm(-100);
+    await h.text("/ga 1 TEST 5", {
+      chat: "group",
+      replyTo: {
+        message_id: 3,
+        date: 0,
+        chat: { id: -100 },
+        from: { id: 5150, is_bot: false, first_name: "Ana" },
+      },
+    });
+    expect(JSON.parse(h.store.pending()[0]!.body)).toMatchObject({ gameType: 1, maxPlayers: 5 });
+  });
+
   test("a wallet with a pending transaction cannot start another game", async () => {
     useEvm();
     await h.text("/cf 1 TEST");

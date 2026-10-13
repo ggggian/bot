@@ -974,3 +974,70 @@ test("replacement survives restart and fences stale workers and concurrent repla
     db.replaceExpiredGameCreation("refresh", "new", { ...replacement, signature: "third" }, 2004),
   ).toBe(false);
 });
+
+test("a saved challenge reads back by game address and unknown games have none", () => {
+  const db = GameDatabase.getInstance();
+
+  db.saveGameChallenge("challenge_game", { telegramId: "5150", displayName: "@rival" }, 1_700);
+
+  expect(db.getGameChallenge("challenge_game")).toEqual({
+    telegramId: "5150",
+    displayName: "@rival",
+  });
+  expect(db.getGameChallenge("open_game")).toBeNull();
+});
+
+test("a game's challenged player cannot be replaced", () => {
+  const db = GameDatabase.getInstance();
+  db.saveGameChallenge("challenge_game", { telegramId: "5150", displayName: "@rival" });
+
+  expect(() =>
+    db.saveGameChallenge("challenge_game", { telegramId: "6160", displayName: "@intruder" }),
+  ).toThrow();
+  expect(db.getGameChallenge("challenge_game")).toEqual({
+    telegramId: "5150",
+    displayName: "@rival",
+  });
+});
+
+test("cleanupOldGames drops the challenges of the games it deletes only", () => {
+  const db = GameDatabase.getInstance();
+  const sqlite: any = (db as any).db;
+  const thirtyOneDaysAgo = Date.now() - 31 * 24 * 60 * 60 * 1000;
+
+  db.saveGame("old_challenge", "creator_old", 100, "coinflip");
+  db.saveGameChallenge("old_challenge", { telegramId: "5150", displayName: "@old" });
+  sqlite
+    .prepare("UPDATE games SET created_at = ? WHERE game_address = ?")
+    .run(thirtyOneDaysAgo, "old_challenge");
+  db.saveGame("live_challenge", "creator_live", 100, "coinflip");
+  db.saveGameChallenge("live_challenge", { telegramId: "6160", displayName: "@live" });
+
+  db.cleanupOldGames(30);
+
+  expect(db.getGameChallenge("old_challenge")).toBeNull();
+  expect(db.getGameChallenge("live_challenge")).toEqual({
+    telegramId: "6160",
+    displayName: "@live",
+  });
+});
+
+test("cleanupOldGames drops old challenges whose game was never created", () => {
+  const db = GameDatabase.getInstance();
+  const thirtyOneDaysAgo = Date.now() - 31 * 24 * 60 * 60 * 1000;
+
+  db.saveGameChallenge(
+    "failed_creation",
+    { telegramId: "5150", displayName: "@old" },
+    thirtyOneDaysAgo,
+  );
+  db.saveGameChallenge("creating_now", { telegramId: "6160", displayName: "@new" });
+
+  db.cleanupOldGames(30);
+
+  expect(db.getGameChallenge("failed_creation")).toBeNull();
+  expect(db.getGameChallenge("creating_now")).toEqual({
+    telegramId: "6160",
+    displayName: "@new",
+  });
+});

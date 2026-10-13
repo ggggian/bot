@@ -17,6 +17,12 @@ export interface LeaderboardStatsRecord {
   lostAmountByToken?: Record<string, number>;
 }
 
+/** The only player who may accept a challenge coinflip. */
+export interface GameChallenge {
+  telegramId: string;
+  displayName: string;
+}
+
 export interface CompletedGameFinanceRecord {
   tokenMint: string;
   tokenTicker: string;
@@ -199,6 +205,14 @@ export class GameDatabase extends BaseDatabase {
         )`,
         `CREATE INDEX IF NOT EXISTS idx_pending_game_creations_retry
           ON pending_game_creations(next_attempt_at)`,
+        // Written before the creation transaction is built, so no recovery path
+        // can see the game on chain without its challenged player.
+        `CREATE TABLE IF NOT EXISTS game_challenges (
+          game_address TEXT PRIMARY KEY,
+          challenged_telegram_id TEXT NOT NULL,
+          challenged_display_name TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        )`,
       ],
       "Game",
     );
@@ -585,6 +599,21 @@ export class GameDatabase extends BaseDatabase {
       "deleting old game participants",
     );
 
+    // A challenge is saved before its game reaches the chain, so a failed
+    // creation leaves one without a game row: those go by their own age.
+    this.run(
+      `DELETE FROM game_challenges
+       WHERE game_address IN (
+         SELECT game_address FROM games WHERE created_at < ?
+       )
+       OR (
+         created_at < ?
+         AND game_address NOT IN (SELECT game_address FROM games)
+       )`,
+      [cutoffMs, cutoffMs],
+      "deleting old game challenges",
+    );
+
     // Then delete the games themselves
     const gamesResult = this.run(
       "DELETE FROM games WHERE created_at < ?",
@@ -683,6 +712,33 @@ export class GameDatabase extends BaseDatabase {
       telegramId: result.creator_telegram_id,
       publicKey: result.public_key || null,
     };
+  }
+
+  public saveGameChallenge(
+    gameAddress: string,
+    challenge: GameChallenge,
+    now: number = Date.now(),
+  ): void {
+    // Plain INSERT: a game address never changes its challenged player.
+    this.run(
+      `INSERT INTO game_challenges
+        (game_address, challenged_telegram_id, challenged_display_name, created_at)
+        VALUES (?, ?, ?, ?)`,
+      [gameAddress, challenge.telegramId, challenge.displayName, now],
+      "saving game challenge",
+    );
+  }
+
+  public getGameChallenge(gameAddress: string): GameChallenge | null {
+    const row = this.get<{ challenged_telegram_id: string; challenged_display_name: string }>(
+      `SELECT challenged_telegram_id, challenged_display_name
+        FROM game_challenges WHERE game_address = ?`,
+      [gameAddress],
+      "getting game challenge",
+    );
+    return row
+      ? { telegramId: row.challenged_telegram_id, displayName: row.challenged_display_name }
+      : null;
   }
 
   public gameExists(gameAddress: string): boolean {

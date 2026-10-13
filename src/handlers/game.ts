@@ -1,6 +1,11 @@
 import { parseGameCommandInput } from "./game-command-input";
 import type { Context } from "grammy";
 import { getRequiredTelegramIdForContext } from "../utils/context-helpers";
+import {
+  CHALLENGE_NEEDS_AMOUNT_MESSAGE,
+  CHALLENGE_SAME_CHAT_MESSAGE,
+  resolveChallengeTarget,
+} from "../utils/game-challenge";
 
 export type GameTokenOverride = {
   tokenMint: string;
@@ -31,8 +36,20 @@ export async function handleCoinflipCommand(ctx: Context & { message?: any }, de
     return;
   }
   const args = ctx.message?.text?.trim().split(/\s+/) ?? [];
+  // Replies to another chat or forum topic name no one here, so they cannot be
+  // challenges; refuse them instead of opening a game anyone could join.
+  if (ctx.message?.external_reply) {
+    await ctx.reply(CHALLENGE_SAME_CHAT_MESSAGE);
+    return;
+  }
   const input = parseGameCommandInput(args.slice(1));
   if (input.mode === "menu") {
+    // The setup menu cannot carry a challenge, so ask for the amount instead of
+    // opening a game anyone could join.
+    if (resolveChallengeTarget(ctx.message, telegramId)) {
+      await ctx.reply(CHALLENGE_NEEDS_AMOUNT_MESSAGE, { parse_mode: "HTML" });
+      return;
+    }
     const override = input.token
       ? await deps.resolveTokenOverride(input.token, ctx.chat?.id)
       : undefined;

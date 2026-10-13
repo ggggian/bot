@@ -18,9 +18,11 @@ import { Context } from "grammy";
 import { WalletManager } from "./wallet";
 import {
   GameDatabase,
+  type GameChallenge,
   type PendingGameCreationRecord,
   type PendingGameCreationState,
 } from "./game-database";
+import { CHALLENGE_JOIN_LABEL, CHALLENGE_PLAYERS } from "./game-challenge";
 import { OracleClient, formatOraclePolicyError } from "./oracle";
 import { PDAManager } from "./pda";
 import { buildFriendlyShortfallMessage, formatUserFriendlyError } from "./errors";
@@ -86,6 +88,9 @@ import {
   buildParticipantsList,
   buildExpirationText,
   buildGameStateUnavailableMessage,
+  buildChallengeHeader,
+  buildChallengeStatus,
+  buildUserMention,
 } from "./game-ui";
 import {
   sanitizeTelegramDisplayName,
@@ -2829,12 +2834,15 @@ export class GameManager {
     return `\n\nWinner: ${safeWinner}${linkLine}`;
   }
 
-  private generateGameKeyboard(status: string, gamePda: PublicKey) {
+  private generateGameKeyboard(status: string, gamePda: PublicKey, isChallenge = false) {
     if (status.toLowerCase() === "completed") return [];
 
     const keyboard = [
       [
-        { text: "🎮 Join", callback_data: `join_${gamePda.toBase58()}` },
+        {
+          text: isChallenge ? CHALLENGE_JOIN_LABEL : "🎮 Join",
+          callback_data: `join_${gamePda.toBase58()}`,
+        },
         { text: "🔁 Refresh", callback_data: `refresh_${gamePda.toBase58()}` },
       ],
     ];
@@ -3035,17 +3043,36 @@ export class GameManager {
       creatorPublicKey && creatorUsername === this.formatAddress(creatorPublicKey)
         ? creatorPublicKey
         : null;
-    const header = buildGameHeader(
-      formatGameTypeWithEmoji(gameType),
-      formattedTicketAmount,
-      tokenTicker,
-      safeCreatorUsername,
-      currentTickets,
-      maxTickets,
-      usdApproximation?.text,
-      explorerUrl,
-      creatorWalletAddress,
-    );
+    const challenge = this.readGameChallenge(gameCacheKey);
+    // A drawn winner means both played, even if the local player list lags; a
+    // challenge that expired unanswered has neither, so it never reads as a match.
+    const hasWinner =
+      !!winnerAddress && winnerAddress !== "cancelled" && winnerAddress !== DEFAULT_NULL_ADDRESS;
+    const challengeAccepted = hasWinner || currentTickets >= CHALLENGE_PLAYERS;
+    const header = challenge
+      ? buildChallengeHeader(
+          formattedTicketAmount,
+          tokenTicker,
+          safeCreatorUsername,
+          suppressMentions
+            ? escapeHtml(sanitizeDisplay(challenge.displayName))
+            : buildUserMention(challenge.telegramId, sanitizeDisplay(challenge.displayName)),
+          challengeAccepted,
+          usdApproximation?.text,
+          explorerUrl,
+          creatorWalletAddress,
+        )
+      : buildGameHeader(
+          formatGameTypeWithEmoji(gameType),
+          formattedTicketAmount,
+          tokenTicker,
+          safeCreatorUsername,
+          currentTickets,
+          maxTickets,
+          usdApproximation?.text,
+          explorerUrl,
+          creatorWalletAddress,
+        );
     // Show current prize if different from base amount
     let prizeUsdApproximation: string | null = null;
     if (usdApproximation) {
@@ -3073,7 +3100,8 @@ export class GameManager {
 
     const participantDisplayNames: ParticipantDisplay[] = [];
     let totalParticipants = 0;
-    if (currentTickets > 0) {
+    // A challenge header already names both players.
+    if (currentTickets > 0 && !challenge) {
       try {
         totalParticipants = Math.max(0, Number(currentTickets) || 0);
         const previewLimit = Math.max(0, GAME_MESSAGE_PARTICIPANTS_PREVIEW_LIMIT);
@@ -3121,9 +3149,13 @@ export class GameManager {
       }
     }
 
-    const statusSection = !isCompleted
-      ? `\nStatus: ${buildGameStatus(currentTickets, minTickets, maxTickets)}${expirationInfo}`
-      : "";
+    const statusText = challenge
+      ? buildChallengeStatus(
+          challengeAccepted,
+          escapeHtml(sanitizeTelegramDisplayNameWithoutMention(challenge.displayName)),
+        )
+      : buildGameStatus(currentTickets, minTickets, maxTickets);
+    const statusSection = !isCompleted ? `\nStatus: ${statusText}${expirationInfo}` : "";
 
     const composeMessage = (names: ParticipantDisplay[], omittedCount: number): string => {
       const participantsSection = names.length > 0 ? buildParticipantsList(names) : "";
@@ -3159,9 +3191,22 @@ export class GameManager {
       messageText = messageText.slice(0, TELEGRAM_MESSAGE_CHAR_LIMIT - 1) + "…";
     }
 
-    const keyboard = this.generateGameKeyboard(status, gamePda);
+    const keyboard = this.generateGameKeyboard(status, gamePda, challenge !== null);
 
     return { messageText, keyboard };
+  }
+
+  /**
+   * A card that cannot read its challenge renders as a regular coinflip; the
+   * join authorization still reads the challenge and fails closed.
+   */
+  private readGameChallenge(gameAddress: string): GameChallenge | null {
+    try {
+      return (this.gameDb as any).getGameChallenge?.(gameAddress) ?? null;
+    } catch (error) {
+      console.warn(`Failed to read challenge for ${gameAddress}:`, error);
+      return null;
+    }
   }
 
   private async buildGameMessagePayload(
@@ -4231,7 +4276,12 @@ export class GameManager {
     minTickets: number,
     timeout: number,
     telegramId: bigint,
-    options?: { isPrivate?: boolean; replyToMessageId?: number; creationMessageId?: number },
+    options?: {
+      isPrivate?: boolean;
+      replyToMessageId?: number;
+      creationMessageId?: number;
+      challenge?: GameChallenge;
+    },
     chatId?: number,
     requestTimestampMs: number = Date.now(),
   ): Promise<{
@@ -4251,7 +4301,9 @@ export class GameManager {
     }
 
     const telegramIdStr = telegramId.toString();
-    const isPrivate = options?.isPrivate ?? true;
+    // Only private games need the operator's signature to join, which is what
+    // keeps everyone but the challenged player out of a challenge.
+    const isPrivate = options?.challenge ? true : (options?.isPrivate ?? true);
     const requestKey =
       chatId != null && options?.replyToMessageId != null
         ? `${telegramIdStr}:${chatId}:${options.replyToMessageId}`
@@ -4688,6 +4740,9 @@ export class GameManager {
       const gamePda = await PDAManager.getGamePDA(randomHashBuffer, this.program.programId);
       foregroundGameAddress = gamePda.toBase58();
       this.foregroundCreationGames.add(foregroundGameAddress);
+      // Before the transaction exists, so the game never reaches the chain without it.
+      if (options?.challenge)
+        this.gameDb.saveGameChallenge(foregroundGameAddress, options.challenge);
       const tokenAccounts = await this.resolveGameVaultAccounts(tokenMintPubkey);
       const gameFundsContext = buildGameFundsContext(
         contractVersion,
@@ -5413,7 +5468,7 @@ export class GameManager {
       let pendingRecorded = false;
 
       if (gameAccount.isPrivate) {
-        const result = await this.joinPrivateGame(gamePda, playerKp, chatId || 0);
+        const result = await this.joinPrivateGame(gamePda, playerKp, chatId || 0, telegramId);
         if (!result.success) {
           return {
             success: false,
@@ -5897,13 +5952,14 @@ export class GameManager {
     gamePda: PublicKey,
     playerKp: Keypair,
     chatId: number,
+    telegramId: bigint,
   ): Promise<{
     success: boolean;
     tx?: string;
     error?: string;
   }> {
     try {
-      const authResult = await this.oracleClient.authorizePlayer(gamePda, chatId);
+      const authResult = await this.oracleClient.authorizePlayer(gamePda, chatId, telegramId);
 
       if (!authResult.authorized) {
         return {

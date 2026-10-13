@@ -168,4 +168,69 @@ describe("game handler: coinflip command", () => {
     expect(calls.resolved).toEqual([]);
     expect(calls.interactive).toBe(1);
   });
+
+  test("a menu-only coinflip replying to someone asks for the amount instead of opening a game", async () => {
+    const ctx: any = createTelegramContext("/cf TKN");
+    ctx.message.reply_to_message = {
+      message_id: 9,
+      from: { id: 5150, is_bot: false, first_name: "Ana" },
+    };
+    const opened: unknown[] = [];
+    const deps: any = {
+      isGroupChat: () => true,
+      showInteractiveSetup: async () => {
+        opened.push("menu");
+      },
+      createGameViaCommand: async () => {
+        opened.push("game");
+      },
+      resolveTokenOverride: async () => {
+        opened.push("token");
+        return null;
+      },
+    };
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(opened).toEqual([]);
+    expect(ctx.__calls).toEqual([
+      [
+        "reply",
+        "To challenge someone, reply to their message with <code>/cf &lt;amount&gt; [TOKEN]</code>.",
+        { parse_mode: "HTML" },
+      ],
+    ]);
+  });
+
+  test.each(["/cf 10", "/cf"])(
+    "%s replying to a message from another chat or topic is refused instead of opening a game",
+    async (text) => {
+      const ctx: any = createTelegramContext(text);
+      ctx.message.external_reply = {
+        origin: {
+          type: "user",
+          date: 0,
+          sender_user: { id: 5150, is_bot: false, first_name: "Ana" },
+        },
+      };
+      const opened: unknown[] = [];
+      const deps: any = {
+        isGroupChat: () => true,
+        showInteractiveSetup: async () => {
+          opened.push("menu");
+        },
+        createGameViaCommand: async () => {
+          opened.push("game");
+        },
+        resolveTokenOverride: async () => null,
+      };
+
+      await handleCoinflipCommand(ctx, deps);
+
+      expect(opened).toEqual([]);
+      expect(ctx.__calls).toEqual([
+        ["reply", "To challenge someone, reply to their message in this chat and topic."],
+      ]);
+    },
+  );
 });

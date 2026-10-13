@@ -3,6 +3,7 @@ import { resolveChatDefaultPlayers } from "./utils/chat-settings";
 import { resolveAdvancedOptions } from "./utils/game-settings";
 import { mapWithConcurrency } from "./utils/concurrency";
 import { registerEvmBot } from "./evm/bot";
+import { CHALLENGE_JOIN_LABEL } from "./utils/game-challenge";
 import "./utils/logging";
 import { Bot, Context, InlineKeyboard } from "grammy";
 import type { NextFunction } from "grammy";
@@ -1388,14 +1389,18 @@ const extractCondensedGameLabel = (
 
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const formatActiveJoinLabel = (amountPart?: string | null, ticker?: string | null): string => {
+const formatActiveJoinLabel = (
+  amountPart?: string | null,
+  ticker?: string | null,
+  action = "🎮 Join",
+): string => {
   let cleanedAmount = amountPart ?? null;
   if (cleanedAmount && ticker) {
     cleanedAmount = cleanedAmount.replace(new RegExp(`\\s*${escapeRegex(ticker)}(?![\\w])`), "");
     cleanedAmount = cleanedAmount.replace(/\s{2,}/g, " ").trim();
   }
   const amountSegment = cleanedAmount ? ` • ${cleanedAmount}` : "";
-  return `🎮 Join${amountSegment}`;
+  return `${action}${amountSegment}`;
 };
 
 const rewriteJoinButtons = (
@@ -1414,6 +1419,8 @@ const rewriteJoinButtons = (
         text: formatActiveJoinLabel(
           parseActiveGameHeader(game.messageText).amountPart,
           parseActiveGameHeader(game.messageText).ticker,
+          // Only the challenged player can accept, so keep saying so.
+          button.text === CHALLENGE_JOIN_LABEL ? CHALLENGE_JOIN_LABEL : undefined,
         ),
       };
     }
@@ -4208,7 +4215,7 @@ registerCaseInsensitiveCommand(
     "<b>🎲 How to use the bot</b>",
     "",
     "<b>🎮 Games</b>",
-    "/coinflip &lt;amount&gt; [token] [players]: Start a coinflip (or /cf)",
+    "/coinflip &lt;amount&gt; [token] [players]: Start a coinflip (or /cf), or reply to someone to challenge them",
     "/giveaway &lt;amount&gt; [token] [players]: Start a giveaway (or /ga)",
     "/faucet &lt;amount&gt; [token] [users]: First come, first served drop (or /rain)",
     "/active: Games in progress",

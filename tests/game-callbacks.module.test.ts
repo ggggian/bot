@@ -26,6 +26,7 @@ function setup(overrides: { games?: Record<string, any>; deps?: Record<string, u
   const gameDb: any = {
     getGame: mock((address: string) => games.get(address) ?? null),
     savePlayerMapping: mock(() => {}),
+    getGameChallenge: mock((_address: string): any => null),
   };
   const gameManager: any = {
     joinGame: mock(async (): Promise<any> => ({
@@ -695,5 +696,41 @@ describe("registered setup callbacks", () => {
     const { replies } = await h.dispatch("back_to_amounts_giveaway_7");
 
     expect(replies[0]).toContain("Try:\n• 1 TKN\n");
+  });
+});
+
+describe("accepting a challenge", () => {
+  const challengeFor = (telegramId: string) => ({ telegramId, displayName: "Ana Paz" });
+
+  test("someone other than the challenged player is told who it is for and nothing runs", async () => {
+    const h = setup();
+    h.gameDb.getGameChallenge.mockImplementation(() => challengeFor("5150"));
+
+    const { answers } = await run(h, `join_${GAME}`);
+
+    expect(answers).toEqual(["This challenge is for Ana Paz."]);
+    expect(h.gameDb.getGameChallenge).toHaveBeenCalledWith(GAME);
+    expect(h.gameManager.joinGame).not.toHaveBeenCalled();
+    expect(h.gameManager.createGameMessage).not.toHaveBeenCalled();
+    expect(h.gameDb.savePlayerMapping).not.toHaveBeenCalled();
+  });
+
+  test("the challenged player joins like any other player", async () => {
+    const h = setup();
+    h.gameDb.getGameChallenge.mockImplementation(() => challengeFor("7"));
+
+    const { answers } = await run(h, `join_${GAME}`);
+
+    expect(answers).toEqual(["✅ Joined! (1/2)"]);
+    expect(h.gameManager.joinGame).toHaveBeenCalledWith(GAME, 7n, CHAT, "@alice");
+  });
+
+  test("Refresh on a challenge card does not check the challenge", async () => {
+    const h = setup();
+    h.gameDb.getGameChallenge.mockImplementation(() => challengeFor("5150"));
+
+    await run(h, `refresh_${GAME}`);
+
+    expect(h.gameDb.getGameChallenge).not.toHaveBeenCalled();
   });
 });

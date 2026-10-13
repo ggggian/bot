@@ -67,6 +67,7 @@ import { isMessageMissing } from "../utils/telegram-errors";
 import type { WalletManager } from "../utils/wallet";
 import type { GameManager } from "../utils/game";
 import type { GameDatabase } from "../utils/game-database";
+import { challengeForSomeoneElseMessage } from "../utils/game-challenge";
 import type { WrapCallbackHandler } from "../utils/callback-registry";
 import type { CreatorCallbackContext, GameSetupCopy, GameSetupModule } from "./game-setup";
 import type { TimbaProgram } from "../utils/timba-program";
@@ -929,7 +930,13 @@ export const createGameCallbacksModule = (deps: GameCallbacksModuleDeps): GameCa
       const gamePda = new PublicKey(gameAddress);
 
       switch (action) {
-        case "join":
+        case "join": {
+          // Answer here, before any work; authorizePlayer enforces the same rule on chain.
+          const challenge = deps.gameDb.getGameChallenge(gameAddress);
+          if (challenge && challenge.telegramId !== telegramId.toString()) {
+            await safeAnswerCallbackQuery(ctx, challengeForSomeoneElseMessage(challenge));
+            break;
+          }
           // Joining signs and confirms a transaction. Show progress if it is
           // not done quickly; the updated game card then shows the result.
           await answerCallbackWithGrace(ctx, () => handleJoinGame(ctx, gamePda, telegramId, game), {
@@ -937,6 +944,7 @@ export const createGameCallbacksModule = (deps: GameCallbacksModuleDeps): GameCa
             onLateAnswer: replyWithLateJoinFailure(ctx),
           });
           break;
+        }
         case "refresh":
           await answerCallbackWithGrace(ctx, () =>
             handleRefreshGameCallback(ctx, gamePda, gameAddress),

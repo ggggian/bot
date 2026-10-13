@@ -164,6 +164,47 @@ describe("/active command in group chats", () => {
     process.env.SOLANA_NETWORK = savedNetwork;
   });
 
+  test("keeps a challenge's Accept button instead of offering it as a regular join", async () => {
+    const stubGameManager = {
+      getChatActiveGames: vi.fn(async () => [
+        {
+          messageText:
+            '<b>⚔️ Challenge <a href="https://example.test">🔎</a> • 100 TIMBA</b>\n@creator challenged @rival',
+          keyboard: [
+            [
+              { text: "⚔️ Accept", callback_data: "join_challenge" },
+              { text: "🔁 Refresh", callback_data: "refresh_challenge" },
+            ],
+          ],
+          gameAddress: "challenge",
+          currentTickets: 1,
+          maxTickets: 2,
+          minTickets: 2,
+        },
+      ]),
+    } as any;
+    botModule.__test_setGameManager(stubGameManager);
+    const reply = vi.fn(async (text: string, options: any) => ({ text, ...options }));
+
+    await botModule.__test_handleActiveCommand({
+      chat: { id: -100, type: "supergroup" },
+      from: { id: 1234, is_bot: false, first_name: "Tester" },
+      message: {
+        message_id: 12,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: -100, type: "supergroup" },
+        text: "/active",
+      },
+      reply,
+    } as any);
+
+    const inlineKeyboard = reply.mock.calls[0]![1]?.reply_markup?.inline_keyboard;
+    expect(inlineKeyboard?.[0]?.[0]?.text).toBe("1. ⚔️ Challenge (1/2) • TIMBA");
+    expect(inlineKeyboard?.[1]).toEqual([
+      { text: "⚔️ Accept • 100", callback_data: "join_challenge" },
+    ]);
+  });
+
   test("renders private-chat active games with the same menu as /public", async () => {
     const mockGames = [
       {

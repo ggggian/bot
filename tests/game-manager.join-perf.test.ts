@@ -12,13 +12,15 @@ import {
 
 const GAME_ADDRESS = new PublicKey("BPFLoader1111111111111111111111111111111111").toBase58();
 
-const buildJoinFixture = async (options: { postJoinFetchFails?: boolean } = {}) => {
+const buildJoinFixture = async (
+  options: { postJoinFetchFails?: boolean; isPrivate?: boolean } = {},
+) => {
   resetGameManager();
   const playerKp = await Keypair.generate();
   const tokenMint = new PublicKey("So11111111111111111111111111111111111111112");
   let fetchCount = 0;
   const preJoinAccount = {
-    isPrivate: false,
+    isPrivate: options.isPrivate ?? false,
     ticketsCount: 0,
     maxTickets: 2,
     gameType: { coinflip: {} },
@@ -278,5 +280,23 @@ describe("GameManager.updateGameMessage fan-out", () => {
     await gm.updateGameMessage(ctx, GAME_ADDRESS, "coinflip", 1_000, "@creator", "Active", "TOK");
 
     expect(texts.some((text) => text.includes("Cancelled"))).toBe(true);
+  });
+});
+
+describe("GameManager.joinGame on a private game", () => {
+  test("hands the joining player's id to the private join, which can refuse a challenge", async () => {
+    const fixture = await buildJoinFixture({ isPrivate: true });
+    const privateJoins: unknown[][] = [];
+    (fixture.gm as any).joinPrivateGame = async (...args: unknown[]) => {
+      privateJoins.push(args);
+      return { success: false, error: "This challenge is for Ana Paz." };
+    };
+
+    const result = await fixture.gm.joinGame(GAME_ADDRESS, 6160n, -100777);
+
+    expect(result).toEqual({ success: false, error: "This challenge is for Ana Paz." });
+    expect(privateJoins).toHaveLength(1);
+    expect((privateJoins[0]![0] as PublicKey).toBase58()).toBe(GAME_ADDRESS);
+    expect(privateJoins[0]!.slice(2)).toEqual([-100777, 6160n]);
   });
 });

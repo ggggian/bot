@@ -57,6 +57,7 @@ describe("GameManager joinPrivateGame resilience", () => {
       new PublicKey("BPFLoader1111111111111111111111111111111111"),
       playerKp,
       99,
+      31n,
     );
 
     expect(result.success).toBe(false);
@@ -126,6 +127,7 @@ describe("GameManager joinPrivateGame resilience", () => {
       new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
       playerKp,
       101,
+      31n,
     );
 
     expect(result.success).toBe(true);
@@ -152,8 +154,12 @@ describe("GameManager joinPrivateGame resilience", () => {
     const gm = GameManager.getInstance(program, wallet, {
       getGame: () => ({ token_mint: "mint" }),
     } as any);
+    const authorizations: unknown[][] = [];
     (gm as any).oracleClient = {
-      authorizePlayer: async () => ({ authorized: true, operatorKeypair: adminKp }),
+      authorizePlayer: async (...args: unknown[]) => {
+        authorizations.push(args);
+        return { authorized: true, operatorKeypair: adminKp };
+      },
     };
     (gm as any).buildJoinAccounts = async () => ({
       accounts: { mock: true },
@@ -179,9 +185,14 @@ describe("GameManager joinPrivateGame resilience", () => {
       new PublicKey("BPFLoader1111111111111111111111111111111111"),
       playerKp,
       99,
+      31n,
     );
 
     expect(result).toEqual({ success: true, tx: "SIG_RESENT" });
+    // The joining player reaches the authorization, which enforces challenges.
+    expect(authorizations).toEqual([
+      [new PublicKey("BPFLoader1111111111111111111111111111111111"), 99, 31n],
+    ]);
     expect(resends).toEqual([[[setupIx, joinIx], [playerKp, adminKp], "Player join transaction"]]);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { PublicKey } from "#solana";
 import { GameManager } from "../src/utils/game";
+import { DEFAULT_NULL_ADDRESS } from "../src/utils/constants";
 import { formatAmount, formatCompactTokenDisplay } from "../src/utils/format-amount";
 import { sanitizeTelegramDisplayName } from "../src/utils/telegram-display";
 import {
@@ -263,5 +264,168 @@ describe("GameManager.formatGameMessage", () => {
     const expectedCompact = formatCompactTokenDisplay(expectedTicket);
     expect(res.messageText).toContain(`${expectedCompact} WSOL`);
     expect(res.messageText).not.toContain("$");
+  });
+});
+
+describe("GameManager.formatGameMessage for a challenge", () => {
+  beforeEach(resetGameManager);
+
+  const CHALLENGE = { telegramId: "5150", displayName: "@rival" };
+  // Inserted after "@" so a name stays readable without pinging anyone.
+  const WORD_JOINER = String.fromCharCode(0x2060);
+  const render = async (options: {
+    ticketsCount: number;
+    status?: string;
+    winner?: string;
+    participants?: string[];
+    suppressMentions?: boolean;
+    getGameChallenge?: (address: string) => unknown;
+  }) => {
+    const createdAt = 1_000_000;
+    const program = makeProgramStub({
+      ticketsCount: options.ticketsCount,
+      maxTickets: 2,
+      minTickets: 2,
+      totalAmount: 0,
+      createdAt,
+      timeout: 600,
+      gameType: { coinflip: {} },
+    });
+    const wallet = makeWalletStub({
+      blockTime: createdAt + 30,
+      tokenFormatter: (amount, decimals) =>
+        formatAmount(amount, decimals, { maxFractionDigits: 6, trim: true }),
+    });
+    const db = makeDbStub({
+      participants: options.participants ?? ["4242", "5150"],
+      gameOverride: { token_ticker: "WSOL" },
+      playerTelegramByPub: { WINNERPUB: "5150" },
+      extra: { getGameChallenge: options.getGameChallenge ?? (() => CHALLENGE) },
+    });
+    const gm = GameManager.getInstance(program, wallet, db);
+    const gamePda = await randomGamePublicKey();
+    const res = await gm.formatGameMessage(
+      makeCtxStub(),
+      gamePda,
+      "coinflip",
+      1_000_000_000,
+      "@creator",
+      options.status ?? "Active",
+      "WSOL",
+      options.winner,
+      undefined,
+      undefined,
+      options.suppressMentions ? { suppressMentions: true } : undefined,
+    );
+    return { ...res, gameAddress: gamePda.toBase58() };
+  };
+
+  test("an open challenge names and mentions the challenged player, with an Accept button", async () => {
+    const res = await render({ ticketsCount: 1 });
+
+    expect(res.messageText).toContain("<b>⚔️ Challenge ");
+    expect(res.messageText).toContain('@creator challenged <a href="tg://user?id=5150">@rival</a>');
+    expect(res.messageText).toContain(`\nStatus: Waiting for @${WORD_JOINER}rival to accept`);
+    expect(res.messageText).not.toContain("Creator:");
+    expect(res.messageText).not.toContain("\n1. ");
+    expect(res.keyboard).toEqual([
+      [
+        { text: "⚔️ Accept", callback_data: `join_${res.gameAddress}` },
+        { text: "🔁 Refresh", callback_data: `refresh_${res.gameAddress}` },
+      ],
+    ]);
+  });
+
+  test("an accepted challenge shows the match and waits for the draw", async () => {
+    const res = await render({ ticketsCount: 2 });
+
+    expect(res.messageText).toContain('@creator vs <a href="tg://user?id=5150">@rival</a>');
+    expect(res.messageText).toContain("\nStatus: Accepted, drawing soon");
+    expect(res.messageText).not.toContain("challenged");
+  });
+
+  test("cards copied without mentions do not link or ping the challenged player", async () => {
+    const res = await render({ ticketsCount: 1, suppressMentions: true });
+
+    // Both names carry a word joiner after "@" so neither one pings.
+    expect(res.messageText).toContain(`@${WORD_JOINER}creator challenged @${WORD_JOINER}rival`);
+    expect(res.messageText).not.toContain("tg://user");
+  });
+
+  test("a finished challenge keeps the match header, names the winner and drops the buttons", async () => {
+    const res = await render({ ticketsCount: 2, status: "Completed", winner: "WINNERPUB" });
+
+    expect(res.messageText).toContain('@creator vs <a href="tg://user?id=5150">@rival</a>');
+    expect(res.messageText).toContain("Winner:");
+    expect(res.messageText).not.toContain("Status:");
+    expect(res.keyboard).toEqual([]);
+  });
+
+  test.each(["cancelled", DEFAULT_NULL_ADDRESS])(
+    "a challenge that expired unanswered never reads as a match (winner %s)",
+    async (winner) => {
+      const res = await render({
+        ticketsCount: 1,
+        status: "Completed",
+        winner,
+        participants: ["4242"],
+      });
+
+      expect(res.messageText).toContain(
+        '@creator challenged <a href="tg://user?id=5150">@rival</a>',
+      );
+      expect(res.messageText).toContain("Status: Cancelled");
+      expect(res.messageText).not.toContain(" vs ");
+    },
+  );
+
+  test("a challenge that cannot be read renders as a regular coinflip", async () => {
+    const res = await render({
+      ticketsCount: 1,
+      getGameChallenge: () => {
+        throw new Error("synthetic-read-failure");
+      },
+    });
+
+    expect(res.messageText).toContain("Creator: @creator • 1/2 players");
+    expect(res.keyboard[0]?.[0]?.text).toBe("🎮 Join");
+  });
+
+  test("a coinflip without a challenge keeps the regular card", async () => {
+    const res = await render({ ticketsCount: 1, getGameChallenge: () => null });
+
+    expect(res.messageText).toContain("Creator: @creator • 1/2 players");
+    expect(res.messageText).not.toContain("⚔️");
+    expect(res.keyboard[0]?.[0]?.text).toBe("🎮 Join");
+  });
+
+  test("a finished challenge reads as a match even when the local player list lags", async () => {
+    const res = await render({
+      ticketsCount: 2,
+      status: "Completed",
+      winner: "WINNERPUB",
+      participants: ["4242"],
+    });
+
+    expect(res.messageText).toContain('@creator vs <a href="tg://user?id=5150">@rival</a>');
+    expect(res.messageText).not.toContain("challenged");
+  });
+
+  test("the challenged player's name is escaped in every place it renders", async () => {
+    const markup = { telegramId: "5150", displayName: "<b>Ana & Co</b>" };
+    const escaped = "&lt;b&gt;Ana &amp; Co&lt;/b&gt;";
+
+    const open = await render({ ticketsCount: 1, getGameChallenge: () => markup });
+    expect(open.messageText).toContain(`challenged <a href="tg://user?id=5150">${escaped}</a>`);
+    expect(open.messageText).toContain(`\nStatus: Waiting for ${escaped} to accept`);
+    expect(open.messageText).not.toContain("<b>Ana");
+
+    const copied = await render({
+      ticketsCount: 1,
+      suppressMentions: true,
+      getGameChallenge: () => markup,
+    });
+    expect(copied.messageText).toContain(`challenged ${escaped}`);
+    expect(copied.messageText).not.toContain("<b>Ana");
   });
 });
