@@ -4,6 +4,7 @@ import { resolveAdvancedOptions } from "./utils/game-settings";
 import { mapWithConcurrency } from "./utils/concurrency";
 import { registerEvmBot } from "./evm/bot";
 import { CHALLENGE_JOIN_LABEL } from "./utils/game-challenge";
+import { findNamedUser, resolveNamedUser } from "./utils/user-mention";
 import "./utils/logging";
 import { Bot, Context, InlineKeyboard } from "grammy";
 import type { NextFunction } from "grammy";
@@ -3071,6 +3072,9 @@ const gameCommandsModule = createGameCommandsModule({
   getRequiredTelegramIdForContext: (ctx, label) => getRequiredTelegramIdForContext(ctx, label),
   gameSetupCopy: GAME_SETUP_COPY,
   getChatGameSettings: (chatId) => chatDb.getChatGameSettings(chatId),
+  get usernames() {
+    return gameManager;
+  },
 });
 
 const { createCoinflipDeps, handleGiveawayCommand, __test_createGameViaCommand } =
@@ -3865,41 +3869,6 @@ registerCaseInsensitiveCommand(
 const TIP_USAGE_MESSAGE =
   "Usage: Reply to a user's message or use /tip @username &lt;amount&gt; [TOKEN|USD] (or use $ for USD, e.g. /tip @username $10 WBTC)";
 
-type TipMentionTokenInfo = {
-  index: number | null;
-  length: number | null;
-};
-
-const getTipMentionTokenInfo = (
-  entity: { offset?: number; length?: number },
-  text: string,
-): TipMentionTokenInfo => {
-  if (typeof entity.offset !== "number" || entity.offset < 0) {
-    return { index: null, length: null };
-  }
-
-  const before = text.slice(0, entity.offset);
-  const trimmedBefore = before.trim();
-  const index = trimmedBefore.length === 0 ? 0 : trimmedBefore.split(/\s+/).length;
-
-  if (typeof entity.length !== "number" || entity.length <= 0) {
-    return { index, length: null };
-  }
-
-  const mentionText = text.slice(entity.offset, entity.offset + entity.length).trim();
-
-  if (mentionText.length === 0) {
-    return { index, length: null };
-  }
-
-  const tokens = mentionText.split(/\s+/).filter((part) => part.length > 0);
-
-  return {
-    index,
-    length: tokens.length > 0 ? tokens.length : null,
-  };
-};
-
 const handleTipCommand = async (ctx: Context): Promise<void> => {
   const telegramId = await getRequiredTelegramIdForContext(ctx, "tip command");
   if (telegramId == null) {
@@ -3938,146 +3907,50 @@ const handleTipCommand = async (ctx: Context): Promise<void> => {
       recipientName = fromUser.first_name;
     }
   } else {
-    const tokens = args;
-    const entities = Array.isArray(message?.entities) ? (message?.entities as Array<any>) : [];
-
-    let mentionTokenIndex: number | null = null;
-    let mentionUsername: string | null = null;
-    let mentionLabel: string | null = null;
-    let mentionUser: any = null;
-    let mentionIsBot: boolean | null = null;
-    let mentionTokenLength: number | null = null;
-
-    for (const entity of entities) {
-      if (!entity || typeof entity.type !== "string") {
-        continue;
-      }
-
-      if (entity.type === "text_mention" && entity.user) {
-        mentionUser = entity.user;
-        mentionIsBot = entity.user.is_bot === true;
-        const slice =
-          typeof entity.offset === "number" && typeof entity.length === "number"
-            ? messageText.slice(entity.offset, entity.offset + entity.length)
-            : null;
-        if (entity.user.username) {
-          mentionUsername = `@${entity.user.username}`;
-        } else if (slice?.startsWith("@")) {
-          mentionUsername = slice;
-        }
-        mentionLabel = slice && slice.trim().length > 0 ? slice : (entity.user.first_name ?? null);
-        const info = getTipMentionTokenInfo(entity, messageText);
-        mentionTokenIndex = info.index;
-        mentionTokenLength = info.length;
-        break;
-      }
-
-      if (entity.type === "mention") {
-        const slice =
-          typeof entity.offset === "number" && typeof entity.length === "number"
-            ? messageText.slice(entity.offset, entity.offset + entity.length)
-            : null;
-        if (slice) {
-          mentionUsername = slice;
-          mentionLabel = slice;
-          const info = getTipMentionTokenInfo(entity, messageText);
-          mentionTokenIndex = info.index;
-          mentionTokenLength = info.length;
-          break;
-        }
-      }
+    const named = findNamedUser(message);
+    if (!named) {
+      return replyUsageError(ctx, TIP_USAGE_MESSAGE);
     }
 
-    if (!mentionUsername && tokens.length > 1) {
-      for (let i = 1; i < tokens.length; i++) {
-        const token = tokens[i];
-        if (typeof token === "string" && token.startsWith("@") && token.length > 1) {
-          mentionUsername = token;
-          mentionTokenIndex = i;
-          mentionTokenLength = 1;
-          break;
-        }
-      }
-    }
-
-    let resolvedId: string | null = null;
-
-    if (mentionUser?.id !== undefined) {
-      resolvedId = String(mentionUser.id);
-    }
-
-    if (!resolvedId) {
-      if (!mentionUsername) {
-        return replyUsageError(ctx, TIP_USAGE_MESSAGE);
-      }
-
-      const lookedUpId = gameManager.findTelegramIdByUsername(mentionUsername);
-      if (!lookedUpId) {
+    const mentioned = await resolveNamedUser(ctx, named, telegramId, gameManager);
+    switch (mentioned.kind) {
+      case "lookup_failed":
+        throw mentioned.error;
+      case "unknown":
         return replyToMessage(
           ctx,
           `Unable to resolve <code>${escapeHtml(
-            mentionUsername,
+            mentioned.username,
           )}</code>. Ask them to start a chat with the bot first.`,
         );
-      }
-      resolvedId = lookedUpId;
+      case "unusable_id":
+        return replyToMessage(
+          ctx,
+          "Unable to resolve the specified user. Please try replying to their message instead.",
+        );
+      case "self":
+        return replyToMessage(ctx, "You can't tip yourself!");
+      case "bot":
+        return replyToMessage(ctx, "You cannot tip bots!");
     }
 
-    let recipientIdBigInt: bigint;
-    try {
-      recipientIdBigInt = BigInt(resolvedId);
-    } catch {
-      return replyToMessage(
-        ctx,
-        "Unable to resolve the specified user. Please try replying to their message instead.",
-      );
+    let mentionUsername = named.username;
+    let mentionLabel = named.label;
+    if (!mentionUsername && mentioned.member?.username) {
+      mentionUsername = `@${mentioned.member.username}`;
+    }
+    if (!mentionLabel && mentioned.member?.first_name) {
+      mentionLabel = mentioned.member.first_name;
     }
 
-    if (recipientIdBigInt === telegramId) {
-      return replyToMessage(ctx, "You can't tip yourself!");
-    }
-
-    if (mentionIsBot !== true && ctx.chat?.id && typeof ctx.api?.getChatMember === "function") {
-      const candidate = Number(resolvedId);
-      if (Number.isSafeInteger(candidate)) {
-        try {
-          const member = await ctx.api.getChatMember(ctx.chat.id, candidate);
-          if (member?.user?.is_bot) {
-            mentionIsBot = true;
-          }
-          if (!mentionUsername && member?.user?.username) {
-            mentionUsername = `@${member.user.username}`;
-          }
-          if (!mentionLabel && member?.user?.first_name) {
-            mentionLabel = member.user.first_name;
-          }
-        } catch {
-          // Ignore errors from getChatMember lookup
-        }
-      }
-    }
-
-    if (mentionIsBot) {
-      return replyToMessage(ctx, "You cannot tip bots!");
-    }
-
-    recipientTelegramId = recipientIdBigInt;
-    recipientName = mentionUsername ?? mentionLabel ?? mentionUser?.first_name ?? "User";
+    recipientTelegramId = mentioned.telegramId;
+    recipientName = mentionUsername ?? mentionLabel ?? named.user?.first_name ?? "User";
 
     if (mentionUsername) {
-      gameManager.primeUsernameCache(ctx, resolvedId, mentionUsername);
+      gameManager.primeUsernameCache(ctx, mentioned.id, mentionUsername);
     }
 
-    const mentionStart = mentionTokenIndex;
-    const mentionTokenCount =
-      mentionStart !== null && mentionStart >= 0 ? Math.max(1, mentionTokenLength ?? 1) : 0;
-
-    amountArgs =
-      mentionStart === null || mentionStart < 1
-        ? args
-        : args.filter(
-            (_token, idx) => idx < mentionStart || idx >= mentionStart + mentionTokenCount,
-          );
+    amountArgs = named.args;
   }
 
   const amountArgIndex = 1;
@@ -4215,7 +4088,7 @@ registerCaseInsensitiveCommand(
     "<b>🎲 How to use the bot</b>",
     "",
     "<b>🎮 Games</b>",
-    "/coinflip &lt;amount&gt; [token] [players]: Start a coinflip (or /cf), or reply to someone to challenge them",
+    "/coinflip &lt;amount&gt; [token] [players]: Start a coinflip (or /cf); add @user or reply to someone to challenge them",
     "/giveaway &lt;amount&gt; [token] [players]: Start a giveaway (or /ga)",
     "/faucet &lt;amount&gt; [token] [users]: First come, first served drop (or /rain)",
     "/active: Games in progress",

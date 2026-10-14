@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { Keypair } from "#solana";
 import {
   botModule,
+  clearApiOverride,
   lastText,
+  overrideApiMethod,
   resetCalls,
   restoreStubs,
   sendText,
@@ -133,5 +135,40 @@ describe("/coinflip through the bot", () => {
     await sendText("/cf NOPE", { userId: USER, chatId: GROUP });
 
     expect(lastText()).toBe("Token unavailable. Check its symbol or address.");
+  });
+});
+
+describe("/coinflip naming who to challenge through the bot", () => {
+  afterEach(() => clearApiOverride("getChatMember"));
+
+  test("a known @username is challenged one on one, privately", async () => {
+    manager.findTelegramIdByUsername = mock(() => "5150");
+    overrideApiMethod("getChatMember", (payload) => ({
+      status: "member",
+      user: { id: payload.user_id, is_bot: false, first_name: "Rival", username: "rival" },
+    }));
+
+    await sendText("/cf 5 BONK @rival", { userId: USER, chatId: GROUP });
+
+    expect(manager.findTelegramIdByUsername).toHaveBeenCalledWith("@rival");
+    const call = manager.createGame!.mock.calls[0] as any[];
+    expect(call[2]).toBe(2);
+    expect(call[6]).toMatchObject({
+      isPrivate: true,
+      challenge: { telegramId: "5150", displayName: "@rival" },
+    });
+  });
+
+  test("a failed read is answered as such and opens nothing", async () => {
+    manager.findTelegramIdByUsername = mock(() => {
+      throw new Error("synthetic-db-down");
+    });
+
+    await sendText("/cf 5 BONK @rival", { userId: USER, chatId: GROUP });
+
+    expect(lastText()).toBe(
+      "I couldn't look up <code>@rival</code>. Try again, or reply to one of their messages.",
+    );
+    expect(manager.createGame).not.toHaveBeenCalled();
   });
 });

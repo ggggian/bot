@@ -295,6 +295,26 @@ describe("EVM token choice between networks", () => {
     expect(h.calls.at(-1)!.method).toBe("editMessageReplyMarkup");
   });
 
+  test("whoever a coinflip names is not its token, wherever the name goes", async () => {
+    for (const [text, replayed] of [
+      ["/cf 1 usdc @ana", "/cf 1 sol-usdc @ana"],
+      ["/cf 1 @ana usdc", "/cf 1 @ana sol-usdc"],
+      ["/cf @ana 1 usdc", "/cf @ana 1 sol-usdc"],
+      ["/cf usdc @ana", "/cf sol-usdc @ana"],
+    ]) {
+      await h.text(text!);
+      const prompt = h.calls.filter((c) => c.method === "sendMessage").at(-1)!;
+      expect(prompt.payload.text).toBe("Choose the token for this game:");
+      await h.click(prompt.payload.reply_markup.inline_keyboard[0][0].callback_data);
+      expect(h.solanaDispatched.at(-1)).toBe(replayed);
+    }
+  });
+
+  test("a giveaway still reads a name where its token goes", async () => {
+    await h.text("/ga 1 @ana");
+    expect(h.replies().at(-1)).toBe("Token unavailable. Check its symbol or address.");
+  });
+
   test("choosing the EVM token creates the game there, and the first choice sticks", async () => {
     const { keyboard } = await askChoice();
     await h.click(keyboard[1].callback_data);
@@ -495,6 +515,25 @@ describe("EVM game commands", () => {
     expect(h.replies().at(-1)).not.toBe(
       "Your Anvil wallet still has a transaction awaiting confirmation.",
     );
+  });
+
+  test("a coinflip naming someone is refused instead of opening an EVM game", async () => {
+    useEvm(-100);
+    for (const text of ["/cf 1 TEST @ana", "/cf @ana 1 TEST", "/ecf 1 TEST @ana"]) {
+      await h.text(text, { chat: "group" });
+      expect(h.replies().at(-1)).toBe("Challenges only work with Solana tokens.");
+    }
+    expect(h.store.pending()).toEqual([]);
+  });
+
+  test("a coinflip naming someone while replying to a bot is refused too", async () => {
+    useEvm(-100);
+    await h.text("/ecf 1 TEST @ana", {
+      chat: "group",
+      replyTo: { message_id: 9, date: 0, from: { id: 7171, is_bot: true, first_name: "Bot" } },
+    });
+    expect(h.replies().at(-1)).toBe("Challenges only work with Solana tokens.");
+    expect(h.store.pending()).toEqual([]);
   });
 
   test("a coinflip replying to another chat or topic is refused too", async () => {

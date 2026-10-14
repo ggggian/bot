@@ -234,3 +234,201 @@ describe("game handler: coinflip command", () => {
     },
   );
 });
+
+describe("game handler: coinflip naming who to challenge", () => {
+  const RIVAL = { id: 5150, is_bot: false, first_name: "Ana" };
+  // Telegram reports @rival as a member of the group.
+  const telegramContext = (...args: Parameters<typeof createTelegramContext>) => {
+    const ctx: any = createTelegramContext(...args);
+    ctx.api = {
+      getChatMember: async () => ({ status: "member", user: { ...RIVAL, username: "rival" } }),
+    };
+    return ctx;
+  };
+  const CHALLENGE = { telegramId: "5150", displayName: "@rival" };
+  const namingDeps = (found: string | null = "5150") => {
+    const created: unknown[][] = [];
+    const lookups: string[] = [];
+    const deps: any = {
+      isGroupChat: (ctx: any) => ctx.chat?.type !== "private",
+      showInteractiveSetup: async () => {
+        created.push(["menu"]);
+      },
+      createGameViaCommand: async (_ctx: any, ...args: unknown[]) => {
+        created.push(args);
+      },
+      resolveTokenOverride: async () => null,
+      usernames: {
+        findTelegramIdByUsername: (username: string) => {
+          lookups.push(username);
+          return found;
+        },
+      },
+    };
+    return { deps, created, lookups };
+  };
+
+  test.each([
+    ["/cf 100 @rival", ["/cf", "100"]],
+    ["/cf @rival 100", ["/cf", "100"]],
+    ["/cf @rival $1", ["/cf", "$1"]],
+    ["/cf $1 @rival", ["/cf", "$1"]],
+    ["/cf 1 USD @rival", ["/cf", "1", "USD"]],
+    ["/cf 100 TIMBA @rival", ["/cf", "100", "TIMBA"]],
+  ])("%s challenges the named user with the rest of the command", async (text, args) => {
+    const ctx: any = telegramContext(text);
+    const { deps, created, lookups } = namingDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(lookups).toEqual(["@rival"]);
+    expect(created).toEqual([[args, 1n, CHALLENGE]]);
+    expect(ctx.__calls).toEqual([]);
+  });
+
+  test("a reply goes to whoever it answers and leaves the name in the command, as /tip does", async () => {
+    const ctx: any = telegramContext("/cf 100 @rival");
+    ctx.message.reply_to_message = { message_id: 9, from: RIVAL };
+    const { deps, created, lookups } = namingDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(lookups).toEqual([]);
+    expect(created).toEqual([[["/cf", "100", "@rival"], 1n]]);
+  });
+
+  test("a name sent as a reply to a bot, oneself or a channel is refused instead of opening a game", async () => {
+    for (const [replied, answer] of [
+      [
+        { message_id: 9, from: { id: 7171, is_bot: true, first_name: "Bot" } },
+        "You can't challenge a bot.",
+      ],
+      [
+        { message_id: 9, from: { id: 1, is_bot: false, first_name: "Me" } },
+        "You can't challenge yourself.",
+      ],
+      [
+        {
+          message_id: 9,
+          from: { id: 1087968824, is_bot: true, first_name: "Group" },
+          sender_chat: { id: -100, type: "supergroup", title: "Group" },
+        },
+        "To challenge someone, reply to their message or name them without replying.",
+      ],
+    ] as const) {
+      const ctx: any = telegramContext("/cf 5 USDC @rival");
+      ctx.message.reply_to_message = replied;
+      const { deps, created, lookups } = namingDeps();
+
+      await handleCoinflipCommand(ctx, deps);
+
+      expect(lookups).toEqual([]);
+      expect(created).toEqual([]);
+      expect(ctx.__calls).toEqual([["reply", answer]]);
+    }
+  });
+
+  test("the same replies without a name still open a regular coinflip", async () => {
+    const ctx: any = telegramContext("/cf 5 USDC");
+    ctx.message.reply_to_message = {
+      message_id: 9,
+      from: { id: 7171, is_bot: true, first_name: "Bot" },
+    };
+    const { deps, created } = namingDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(created).toEqual([[["/cf", "5", "USDC"], 1n]]);
+  });
+
+  test("inside a forum topic the name is still read", async () => {
+    const ctx: any = telegramContext("/cf 100 @rival");
+    ctx.message.reply_to_message = {
+      message_id: 9,
+      from: RIVAL,
+      forum_topic_created: { name: "synthetic-topic", icon_color: 7322096 },
+    };
+    const { deps, created } = namingDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(created).toEqual([[["/cf", "100"], 1n, CHALLENGE]]);
+  });
+
+  test("a reply to another chat does not stop a named challenge, as /tip ignores it too", async () => {
+    const ctx: any = telegramContext("/cf 100 @rival");
+    ctx.message.external_reply = { origin: { type: "user", date: 0, sender_user: RIVAL } };
+    const { deps, created } = namingDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(created).toEqual([[["/cf", "100"], 1n, CHALLENGE]]);
+  });
+
+  test("an unknown name is answered and no game is opened", async () => {
+    const ctx: any = telegramContext("/cf 100 @ghost");
+    const { deps, created } = namingDeps(null);
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(created).toEqual([]);
+    expect(ctx.__calls).toEqual([
+      [
+        "reply",
+        "I don't know who <code>@ghost</code> is. Reply to one of their messages to challenge them.",
+        { parse_mode: "HTML" },
+      ],
+    ]);
+  });
+
+  test("naming oneself is refused", async () => {
+    const ctx: any = telegramContext("/cf 100 @alice");
+    const { deps, created } = namingDeps("1");
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(created).toEqual([]);
+    expect(ctx.__calls).toEqual([
+      ["reply", "You can't challenge yourself.", { parse_mode: "HTML" }],
+    ]);
+  });
+
+  test("someone who left the group is still challenged, as /tip still pays them", async () => {
+    const ctx: any = telegramContext("/cf 100 @rival");
+    ctx.api.getChatMember = async () => ({ status: "left", user: { ...RIVAL, username: "rival" } });
+    const { deps, created } = namingDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(created).toEqual([[["/cf", "100"], 1n, CHALLENGE]]);
+    expect(ctx.__calls).toEqual([]);
+  });
+
+  test("a name without an amount asks for one before looking anyone up", async () => {
+    const ctx: any = telegramContext("/cf @rival TIMBA");
+    const { deps, created, lookups } = namingDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(lookups).toEqual([]);
+    expect(created).toEqual([]);
+    expect(ctx.__calls).toEqual([
+      [
+        "reply",
+        "To challenge someone by name, use <code>/cf &lt;amount&gt; [TOKEN] @username</code>.",
+        { parse_mode: "HTML" },
+      ],
+    ]);
+  });
+
+  test("in a private chat a name is refused instead of opening a public game", async () => {
+    const ctx: any = telegramContext("/cf 100 @rival", "private");
+    const { deps, created, lookups } = namingDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(lookups).toEqual([]);
+    expect(created).toEqual([]);
+    expect(ctx.__calls).toEqual([["reply", "Challenges only work in groups."]]);
+  });
+});

@@ -2,10 +2,17 @@ import { parseGameCommandInput } from "./game-command-input";
 import type { Context } from "grammy";
 import { getRequiredTelegramIdForContext } from "../utils/context-helpers";
 import {
+  CHALLENGE_IN_GROUPS_MESSAGE,
+  CHALLENGE_NAMED_NEEDS_AMOUNT_MESSAGE,
   CHALLENGE_NEEDS_AMOUNT_MESSAGE,
   CHALLENGE_SAME_CHAT_MESSAGE,
+  findChallengeName,
+  namedReplyRefusal,
   resolveChallengeTarget,
+  resolveNamedChallenge,
 } from "../utils/game-challenge";
+import type { GameChallenge } from "../utils/game-database";
+import type { UsernameDirectory } from "../utils/user-mention";
 
 export type GameTokenOverride = {
   tokenMint: string;
@@ -24,8 +31,10 @@ export type CoinflipDeps = {
     ctx: Context & { message?: any },
     args: string[],
     telegramId: bigint,
+    challenge?: GameChallenge,
   ) => Promise<void>;
   resolveTokenOverride: (tokenInput: string, chatId?: number) => Promise<GameTokenOverride | null>;
+  usernames: UsernameDirectory;
 };
 
 export async function handleCoinflipCommand(ctx: Context & { message?: any }, deps: CoinflipDeps) {
@@ -36,6 +45,32 @@ export async function handleCoinflipCommand(ctx: Context & { message?: any }, de
     return;
   }
   const args = ctx.message?.text?.trim().split(/\s+/) ?? [];
+  // A coinflip that replies to no one and names someone challenges them.
+  const named = findChallengeName(ctx.message);
+  if (named) {
+    if (!deps.isGroupChat(ctx)) {
+      await ctx.reply(CHALLENGE_IN_GROUPS_MESSAGE);
+      return;
+    }
+    if (parseGameCommandInput(named.args.slice(1)).mode === "menu") {
+      await ctx.reply(CHALLENGE_NAMED_NEEDS_AMOUNT_MESSAGE, { parse_mode: "HTML" });
+      return;
+    }
+    const target = await resolveNamedChallenge(ctx, named, telegramId, deps.usernames);
+    if ("refusal" in target) {
+      await ctx.reply(target.refusal, { parse_mode: "HTML" });
+      return;
+    }
+    await deps.createGameViaCommand(ctx, named.args, telegramId, target.challenge);
+    return;
+  }
+  // A name sent as a reply to a bot, oneself, a channel or an anonymous admin
+  // asked for a challenge; refuse it instead of opening a game anyone could join.
+  const replyRefusal = namedReplyRefusal(ctx.message, telegramId);
+  if (replyRefusal) {
+    await ctx.reply(replyRefusal);
+    return;
+  }
   // Replies to another chat or forum topic name no one here, so they cannot be
   // challenges; refuse them instead of opening a game anyone could join.
   if (ctx.message?.external_reply) {
