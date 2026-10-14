@@ -2,6 +2,7 @@ import { describe, test, expect, vi } from "bun:test";
 import { PublicKey, Keypair } from "#solana";
 import { GameManager } from "../src/utils/game";
 import { LAMPORTS_PER_SOL, MIN_SOL_BALANCE_FOR_GAMES_LAMPORTS } from "../src/utils/constants";
+import { WSOL_MINT } from "../src/utils/token-registry";
 
 function resetGM() {
   // @ts-ignore
@@ -676,5 +677,170 @@ describe("GameManager.joinGame guards", () => {
     await gm.joinGame(new PublicKey("BPFLoaderD111111111111111111111111111111111").toBase58(), 1n);
     // For coinflip, only spare tokens (1B - 600M = 400M) should be available
     expect(swapAllowance).toBe(400_000_000);
+  });
+
+  test("reports a short stake without waiting for the SOL balance", async () => {
+    resetGM();
+    const program = baseProgram({
+      ticketsCount: 0,
+      maxTickets: 2,
+      gameType: { coinflip: {} },
+      ticketAmount: 1_000_000_000,
+    });
+    const gm = GameManager.getInstance(
+      program,
+      await baseWallet({
+        getTokenBalance: async () => 100,
+        getBalance: () => new Promise<number>(() => {}),
+      }),
+      baseDb(),
+    );
+    (gm as any).isPlayerInGame = async () => false;
+    const res = await gm.joinGame(
+      new PublicKey("BPFLoaderE111111111111111111111111111111111").toBase58(),
+      1n,
+    );
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/Not enough TOK/i);
+  });
+
+  test("reports a short stake even when the SOL balance read fails", async () => {
+    resetGM();
+    const program = baseProgram({
+      ticketsCount: 0,
+      maxTickets: 2,
+      gameType: { coinflip: {} },
+      ticketAmount: 1_000_000_000,
+    });
+    const gm = GameManager.getInstance(
+      program,
+      await baseWallet({
+        getTokenBalance: async () => 0,
+        getBalance: async () => {
+          throw new Error("rpc down");
+        },
+      }),
+      baseDb(),
+    );
+    (gm as any).isPlayerInGame = async () => false;
+    const res = await gm.joinGame(
+      new PublicKey("BPFLoaderF111111111111111111111111111111111").toBase58(),
+      1n,
+    );
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/don't have any TOK tokens/i);
+  });
+
+  test("a full game is reported even when the early balance read fails", async () => {
+    resetGM();
+    const program = baseProgram({
+      ticketsCount: 2,
+      maxTickets: 2,
+      gameType: { coinflip: {} },
+      ticketAmount: 1_000_000_000,
+    });
+    const gm = GameManager.getInstance(
+      program,
+      await baseWallet({
+        getTokenBalance: async () => {
+          throw new Error("rpc down");
+        },
+      }),
+      baseDb(),
+    );
+    (gm as any).isPlayerInGame = async () => false;
+    const res = await gm.joinGame(
+      new PublicKey("BPFLoaderG111111111111111111111111111111111").toBase58(),
+      1n,
+    );
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/already full/i);
+  });
+
+  test("a confirmed participant skips the early balance read", async () => {
+    resetGM();
+    const program = baseProgram({
+      ticketsCount: 1,
+      maxTickets: 2,
+      gameType: { coinflip: {} },
+      ticketAmount: 1_000_000_000,
+    });
+    const getTokenBalance = vi.fn(async () => 0);
+    const gm = GameManager.getInstance(
+      program,
+      await baseWallet({ getTokenBalance }),
+      baseDb({ isGameParticipant: () => true }),
+    );
+    (gm as any).isPlayerInGame = async () => true;
+    const res = await gm.joinGame(
+      new PublicKey("BPFLoaderH111111111111111111111111111111111").toBase58(),
+      1n,
+    );
+    expect(res.error).toMatch(/already joined/i);
+    expect(getTokenBalance).not.toHaveBeenCalled();
+  });
+
+  test("a failed participant lookup still reads the balance early", async () => {
+    resetGM();
+    const program = baseProgram({
+      ticketsCount: 1,
+      maxTickets: 2,
+      gameType: { coinflip: {} },
+      ticketAmount: 1_000_000_000,
+    });
+    const getTokenBalance = vi.fn(async () => 0);
+    const gm = GameManager.getInstance(
+      program,
+      await baseWallet({ getTokenBalance }),
+      baseDb({
+        isGameParticipant: () => {
+          throw new Error("db locked");
+        },
+      }),
+    );
+    (gm as any).isPlayerInGame = async () => true;
+    const res = await gm.joinGame(
+      new PublicKey("BPFLoaderJ111111111111111111111111111111111").toBase58(),
+      1n,
+    );
+    expect(res.error).toMatch(/already joined/i);
+    expect(getTokenBalance).toHaveBeenCalledTimes(1);
+  });
+
+  test("a SOL game short on WSOL goes on to wrap SOL instead of failing early", async () => {
+    resetGM();
+    const program = baseProgram({
+      ticketsCount: 0,
+      maxTickets: 2,
+      gameType: { coinflip: {} },
+      ticketAmount: 1_000_000_000,
+    });
+    const gm = GameManager.getInstance(
+      program,
+      await baseWallet({
+        getTokenBalance: async () => 0,
+        getBalance: async () => 5 * LAMPORTS_PER_SOL,
+      }),
+      baseDb({
+        getGame: () => ({
+          status: "active",
+          token_mint: WSOL_MINT,
+          token_ticker: "SOL",
+          amount: 1_000_000_000,
+        }),
+      }),
+    );
+    (gm as any).isPlayerInGame = async () => false;
+    const ensureWrappedSolBalance = vi.fn(async () => ({
+      success: false,
+      error: "wrap attempted",
+    }));
+    (gm as any).ensureWrappedSolBalance = ensureWrappedSolBalance;
+    const res = await gm.joinGame(
+      new PublicKey("BPFLoaderK111111111111111111111111111111111").toBase58(),
+      1n,
+    );
+    expect(res.error).toBe("wrap attempted");
+    expect(ensureWrappedSolBalance).toHaveBeenCalledTimes(1);
   });
 });
