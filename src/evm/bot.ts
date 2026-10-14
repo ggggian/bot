@@ -1,5 +1,10 @@
 import { parseGameCommandInput } from "../handlers/game-command-input";
-import { resolveChallengeTarget } from "../utils/game-challenge";
+import {
+  findChallengeName,
+  namedReplyRefusal,
+  resolveChallengeTarget,
+} from "../utils/game-challenge";
+import { replaceCommandWord } from "../utils/user-mention";
 import { registerEvmSetup } from "./setup";
 import { inferMaxPlayers } from "../utils/arg-parsing";
 import { buildWalletCaption } from "../utils/wallet-ui";
@@ -87,19 +92,18 @@ export function registerEvmBot(
       .query("UPDATE token_choices SET selected=? WHERE id=? AND selected IS NULL")
       .run(chain, ctx.match[1]!);
     const original = saved.update.message!;
-    const parts = ("text" in original ? (original.text ?? "") : "").trim().split(/\s+/);
-    const input = parseGameCommandInput(parts.slice(1));
-    parts[input.mode === "menu" ? 1 : 2] = saved[chain];
-    const restored = new Context(
-      { ...saved.update, message: { ...original, text: parts.join(" ") } },
-      ctx.api,
-      ctx.me,
-    );
+    // Find the token as when the command arrived, skipping whoever it names.
+    const named = findChallengeName(original);
+    const parts =
+      named?.args ?? ("text" in original ? (original.text ?? "") : "").trim().split(/\s+/);
+    const index = parseGameCommandInput(parts.slice(1)).mode === "menu" ? 1 : 2;
+    const message = replaceCommandWord(original, named?.positions[index] ?? index, saved[chain]);
+    const restored = new Context({ ...saved.update, message }, ctx.api, ctx.me);
     store.commandNetwork(String(restored.update.update_id), String(saved.chat), chain);
     await ctx.answerCallbackQuery();
     if (chain === "solana") await dispatchSolana?.(restored);
     else {
-      const route = routeNetworkCommand(parts.join(" "), ctx.me.username, "evm")!;
+      const route = routeNetworkCommand(message.text ?? "", ctx.me.username, "evm")!;
       restored.match = route.args;
       await handlers.get(route.command)!(restored);
     }
@@ -116,7 +120,9 @@ export function registerEvmBot(
     const candidate = routeNetworkCommand(ctx.message?.text ?? "", ctx.me.username, "evm");
     if (!candidate) return next();
     if (candidate.command === "ecf" || candidate.command === "egiveaway") {
-      const args = candidate.args.trim().split(/\s+/).filter(Boolean);
+      // Whoever a coinflip names is not its token.
+      const named = candidate.command === "ecf" ? findChallengeName(ctx.message) : null;
+      const args = named?.args.slice(1) ?? candidate.args.trim().split(/\s+/).filter(Boolean);
       const { token: tokenInput } = parseGameCommandInput(args);
       const preferred = store.network(String(ctx.chat.id));
       let selected: "solana" | "evm" = preferred;
@@ -400,7 +406,10 @@ export function registerEvmBot(
         // EVM games have no challenge support; never open one to everyone instead.
         if (
           gameType === 0 &&
-          (ctx.message?.external_reply || resolveChallengeTarget(ctx.message, BigInt(user(ctx))))
+          (ctx.message?.external_reply ||
+            resolveChallengeTarget(ctx.message, BigInt(user(ctx))) ||
+            findChallengeName(ctx.message) ||
+            namedReplyRefusal(ctx.message, BigInt(user(ctx))))
         ) {
           await ctx.reply("Challenges only work with Solana tokens.");
           return;

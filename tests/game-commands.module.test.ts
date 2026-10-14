@@ -513,3 +513,49 @@ describe("createGameViaCommand as a reply", () => {
     expect(createGameOptions(gameManager)).not.toHaveProperty("challenge");
   });
 });
+
+describe("createGameViaCommand naming who to challenge", () => {
+  const CHALLENGE = { telegramId: "6160", displayName: "Ana Paz" };
+
+  test("a coinflip given a challenge is private and one on one, over any reply", async () => {
+    const { module, gameManager } = setup({
+      deps: { getChatGameSettings: () => ({ coinflip_default_privacy: "public" }) },
+    });
+    const { ctx } = makeCtx("/cf 5 TKN 6");
+    ctx.message.reply_to_message = {
+      message_id: 9,
+      from: { id: 5150, is_bot: false, first_name: "Other", username: "other" },
+    };
+
+    await module.createGameViaCommand(ctx, ["/cf", "5", "TKN", "6"], 1n, {
+      ...module.COINFLIP_COMMAND_OPTIONS,
+      challenge: CHALLENGE,
+    });
+
+    const call = gameManager.createGame.mock.calls[0] as any[];
+    expect(call[2]).toBe(2);
+    expect(call[6]).toEqual({
+      isPrivate: true,
+      replyToMessageId: 10,
+      creationMessageId: 501,
+      challenge: CHALLENGE,
+    });
+  });
+
+  test("the coinflip deps pass the challenge and the username directory through", async () => {
+    const usernames = { findTelegramIdByUsername: () => null };
+    const { module, gameManager } = setup({ deps: { usernames } });
+    const coinflip = module.createCoinflipDeps();
+    const { ctx } = makeCtx("/cf 5 TKN");
+
+    await coinflip.createGameViaCommand(ctx, ["/cf", "5", "TKN"], 1n, CHALLENGE);
+
+    expect(coinflip.usernames).toBe(usernames);
+    expect((gameManager.createGame.mock.calls[0] as any[])[6]).toEqual({
+      isPrivate: true,
+      replyToMessageId: 10,
+      creationMessageId: 501,
+      challenge: CHALLENGE,
+    });
+  });
+});

@@ -16,6 +16,8 @@ import type { CoinflipDeps, GameTokenOverride } from "./game";
 import type { GameSetupCopy } from "./game-setup";
 import { containsBalanceInfo } from "../utils/context-helpers";
 import { CHALLENGE_PLAYERS, resolveChallengeTarget } from "../utils/game-challenge";
+import type { GameChallenge } from "../utils/game-database";
+import type { UsernameDirectory } from "../utils/user-mention";
 
 export type CreateGameViaCommandOptions = {
   gameType: "coinflip" | "giveaway";
@@ -28,6 +30,8 @@ export type CreateGameViaCommandOptions = {
   inferErrorLabel: string;
   logPrefix: string;
   errorMessage: string;
+  /** Who a coinflip challenges when the command named them. */
+  challenge?: GameChallenge;
 };
 
 type CreateGameViaCommandDeps = {
@@ -93,6 +97,7 @@ export type GameCommandsModuleDeps = {
   getRequiredTelegramIdForContext: (ctx: Context, label: string) => Promise<bigint | null>;
   gameSetupCopy: Record<"coinflip" | "giveaway", GameSetupCopy>;
   getChatGameSettings?: (chatId: number) => ChatGameSettings | null;
+  usernames: UsernameDirectory;
 };
 
 export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
@@ -223,7 +228,9 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
       }
 
       const challenge =
-        options.gameType === "coinflip" ? resolveChallengeTarget(ctx.message, telegramId) : null;
+        options.gameType === "coinflip"
+          ? (options.challenge ?? resolveChallengeTarget(ctx.message, telegramId))
+          : null;
       const maxPlayers = challenge ? CHALLENGE_PLAYERS : inferred.value;
       const tokenMetadata = await createDeps.wallet.getTokenMetadata(parsedAmount.tokenMint);
       const { raw: minAmountRaw } = await createDeps.getTokenPolicyMinimumAmount(
@@ -425,10 +432,14 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
         deps.gameSetupCopy.coinflip,
         tokenOverride,
       ),
-    createGameViaCommand: (ctxWithMessage, args, telegramId) =>
-      createGameViaCommand(ctxWithMessage, args, telegramId, COINFLIP_COMMAND_OPTIONS),
+    createGameViaCommand: (ctxWithMessage, args, telegramId, challenge) =>
+      createGameViaCommand(ctxWithMessage, args, telegramId, {
+        ...COINFLIP_COMMAND_OPTIONS,
+        challenge,
+      }),
     resolveTokenOverride: (tokenInput, chatId) =>
       deps.resolveCommandTokenOverride(tokenInput, chatId),
+    usernames: deps.usernames,
   });
 
   const handleGiveawayCommand = async (ctx: Context & { message?: any }) => {

@@ -467,3 +467,40 @@ describe("/tip recipients and amounts", () => {
     expect(callsTo("getChatMember")).toHaveLength(0);
   });
 });
+
+describe("/tip when the usernames cannot be read", () => {
+  test("a failed username read is raised, never answered as an unknown user", async () => {
+    botModule.__test_setGameManager({
+      findTelegramIdByUsername: () => {
+        throw new Error("synthetic-db-down");
+      },
+      primeUsernameCache: () => {},
+    } as any);
+    const text = "/tip @bob 1";
+
+    await tip(text, { entities: [mentionEntity(text, "@bob")] });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Error in text input handler:",
+      expect.objectContaining({ message: "synthetic-db-down" }),
+    );
+    expect(texts()).toEqual([]);
+  });
+});
+
+describe("/tip to a mentioned username", () => {
+  test("pays the account the username names, under the username that was written", async () => {
+    lookups["@bob"] = String(TARGET);
+    overrideApiMethod("getChatMember", (payload) => ({
+      status: "member",
+      user: { id: payload.user_id, is_bot: false, first_name: "Member", username: "someone_else" },
+    }));
+    const text = "/tip @bob 2";
+
+    await tip(text, { entities: [mentionEntity(text, "@bob")] });
+
+    expect(primed).toEqual([[String(TARGET), "@bob"]]);
+    expect(texts()).toContain("⏳ Tip of 2 SOL ($300) to @bob…");
+    expect(callsTo("sendMessage").at(-1)!.payload.chat_id).toBe(TARGET);
+  });
+});
