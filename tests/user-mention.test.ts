@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import fc from "fast-check";
 import {
   findNamedUser,
   replaceCommandWord,
@@ -206,7 +207,10 @@ const named = (overrides: Partial<NamedUser> = {}): NamedUser => ({
 });
 
 const context = (
-  member: unknown = { status: "member", user: { id: 5150, is_bot: false, first_name: "Rival" } },
+  member: unknown = {
+    status: "member",
+    user: { id: 5150, is_bot: false, first_name: "Rival", username: "Rival" },
+  },
 ) => {
   const getChatMember = mock(async () => {
     if (member instanceof Error) throw member;
@@ -223,6 +227,44 @@ const directory = (found: string | null | Error = "5150") => ({
 });
 
 describe("resolveNamedUser", () => {
+  test("arbitrary handles are accepted only when Telegram reports the same owner and name", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.stringMatching(/^[a-z][a-z0-9_]{4,15}$/),
+        fc.boolean(),
+        async (handle, matches) => {
+          const ctx = context({
+            user: { id: 5150, is_bot: false, username: matches ? handle : `other_${handle}` },
+          }).ctx;
+          const result = await resolveNamedUser(
+            ctx,
+            named({ username: `@${handle.toUpperCase()}` }),
+            SENDER,
+            directory(),
+          );
+          expect(result.kind).toBe(matches ? "user" : "verification_failed");
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  test("fuzzed username text never verifies a different Telegram handle", async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.string({ maxLength: 100 }), async (input) => {
+        const result = await resolveNamedUser(
+          context().ctx,
+          named({ username: input }),
+          SENDER,
+          directory(),
+        );
+        if (result.kind === "user")
+          expect(input.trim().replace(/^@/, "").toLowerCase()).toBe("rival");
+      }),
+      { numRuns: 200 },
+    );
+  });
+
   test("a typed username is looked up and Telegram is asked for the details", async () => {
     const member = {
       status: "member",
@@ -304,20 +346,17 @@ describe("resolveNamedUser", () => {
       id: "6160",
       telegramId: 6160n,
       user,
-      member: { id: 5150, is_bot: false, first_name: "Rival" },
+      member: { id: 5150, is_bot: false, first_name: "Rival", username: "Rival" },
     });
     expect(users.findTelegramIdByUsername).not.toHaveBeenCalled();
   });
 
-  test("Telegram failing to answer does not stop the lookup", async () => {
+  test("Telegram failing to answer blocks a typed username", async () => {
     const error = new Error("synthetic-not-found");
 
     expect(await resolveNamedUser(context(error).ctx, named(), SENDER, directory())).toEqual({
-      kind: "user",
-      id: "5150",
-      telegramId: 5150n,
-      user: null,
-      member: null,
+      kind: "verification_failed",
+      username: "@rival",
     });
   });
 
@@ -329,11 +368,8 @@ describe("resolveNamedUser", () => {
     const withoutApi = { chat: { id: -100 } } as any;
     for (const ctx of [outsideChat, withoutApi]) {
       expect(await resolveNamedUser(ctx, named(), SENDER, directory())).toEqual({
-        kind: "user",
-        id: "5150",
-        telegramId: 5150n,
-        user: null,
-        member: null,
+        kind: "verification_failed",
+        username: "@rival",
       });
     }
     const huge = await resolveNamedUser(
@@ -345,11 +381,58 @@ describe("resolveNamedUser", () => {
 
     expect(getChatMember).not.toHaveBeenCalled();
     expect(huge).toEqual({
+      kind: "verification_failed",
+      username: "@rival",
+    });
+  });
+
+  test("mismatched and removed usernames are invalidated, even with poisoned legacy data", async () => {
+    for (const username of ["someone_else", undefined]) {
+      const users = { ...directory(), invalidateUsernameMapping: mock(() => {}) };
+      const { ctx } = context({ user: { id: 5150, is_bot: false, username } });
+      expect(await resolveNamedUser(ctx, named(), SENDER, users)).toEqual({
+        kind: "verification_failed",
+        username: "@rival",
+      });
+      expect(users.invalidateUsernameMapping).toHaveBeenCalledWith("@rival", "5150");
+    }
+  });
+
+  test("a response for another account never verifies a username", async () => {
+    const { ctx } = context({ user: { id: 6160, is_bot: false, username: "rival" } });
+    expect(await resolveNamedUser(ctx, named(), SENDER, directory())).toEqual({
+      kind: "verification_failed",
+      username: "@rival",
+    });
+  });
+
+  test("a failed invalidation stops resolution and a picked user survives a Telegram outage", async () => {
+    const error = new Error("synthetic-delete-failed");
+    const users = {
+      ...directory(),
+      invalidateUsernameMapping: () => {
+        throw error;
+      },
+    };
+    expect(
+      await resolveNamedUser(
+        context({ user: { id: 5150, username: "other" } }).ctx,
+        named(),
+        SENDER,
+        users,
+      ),
+    ).toEqual({
+      kind: "lookup_failed",
+      username: "@rival",
+      error,
+    });
+    const user = { id: 5150, is_bot: false, first_name: "Rival" };
+    expect(
+      await resolveNamedUser(context(error).ctx, named({ user }), SENDER, directory()),
+    ).toMatchObject({
       kind: "user",
-      id: "123456789012345678901234567890",
-      telegramId: 123456789012345678901234567890n,
-      user: null,
-      member: null,
+      telegramId: 5150n,
+      user,
     });
   });
 });
