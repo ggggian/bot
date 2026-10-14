@@ -1522,6 +1522,44 @@ export class GameManager {
   // ================================
 
   /**
+   * Whether the database already holds a confirmed join for this player. Only a
+   * shortcut: an unknown or failed lookup answers false.
+   */
+  private isConfirmedParticipant(gameAddress: string, telegramId: bigint): boolean {
+    try {
+      return (this.gameDb as any).isGameParticipant?.(gameAddress, telegramId.toString()) === true;
+    } catch (error) {
+      console.warn(`⚠️ Failed to check local participant records for ${gameAddress}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * The message for a token balance that cannot cover the stake, or null when it can.
+   */
+  private describeStakeShortfall(
+    tokenBalance: number,
+    gameAmount: number,
+    decimals: number,
+    tokenTicker: string,
+  ): string | null {
+    if (tokenBalance >= gameAmount) {
+      return null;
+    }
+
+    const formattedBalance = this.wallet.formatTokenBalance(tokenBalance, decimals);
+    const formattedNeed = this.wallet.formatTokenBalance(gameAmount, decimals);
+    const safeTicker = escapeHtml(tokenTicker);
+
+    // Check if user has no token account at all (balance = 0)
+    if (tokenBalance === 0) {
+      return `❌ You don't have any ${safeTicker} tokens. You need ${formattedNeed} ${safeTicker} to join this game. Use /balance to check your address and transfer tokens.`;
+    }
+
+    return `❌ Not enough ${safeTicker}. You have ${formattedBalance} but need ${formattedNeed}. Add more ${safeTicker} or reduce the amount and try again.`;
+  }
+
+  /**
    * Check if a player is in a game via database records, then the on-chain
    * participant list. Pass an already-fetched game account to skip the lookup.
    */
@@ -5310,6 +5348,19 @@ export class GameManager {
         };
       }
 
+      const normalizedTicker = gameData.token_ticker?.toUpperCase?.() ?? "";
+      const isSolBackedGame =
+        gameData.token_mint === WSOL_MINT &&
+        (normalizedTicker === "SOL" || normalizedTicker === "WSOL");
+
+      // The stake check needs only the token balance, so its read starts with the
+      // game account read. A player already confirmed in this game skips it.
+      const earlyTokenBalanceRead = this.isConfirmedParticipant(gameAddress, telegramId)
+        ? undefined
+        : this.wallet.getTokenBalance(telegramId, gameData.token_mint);
+      // The checks below may return before it is awaited.
+      void earlyTokenBalanceRead?.catch(() => undefined);
+
       // Fetch blockchain game state
       let gameAccount: any;
       try {
@@ -5350,20 +5401,41 @@ export class GameManager {
       // This prevents the confusing "Attempt to debit an account but found no record of a prior credit" error
       const currentGameType = Object.keys(gameAccount.gameType)[0];
       const gameAmount = Number(gameAccount.ticketAmount);
-      // Independent reads: token metadata, fee reserve and both balances load together.
+      // Independent reads: token metadata, fee reserve and both balances start together.
+      // The wallet throttle still spaces the two balance reads of one wallet.
+      const metadataRead = this.wallet.getTokenMetadata(gameData.token_mint);
+      const minSolBufferRead = this.feeBudget.getGameSafetyBufferLamports();
+      const tokenBalanceRead =
+        earlyTokenBalanceRead ?? this.wallet.getTokenBalance(telegramId, gameData.token_mint);
+      const solBalanceRead = this.wallet.getBalance(telegramId);
+      // A short stake returns before these two are awaited.
+      void minSolBufferRead.catch(() => undefined);
+      void solBalanceRead.catch(() => undefined);
+
+      // SOL-backed games may wrap SOL to cover the stake. Any other game is checked
+      // here, without waiting for the throttled SOL read, so a short stake is
+      // reported while the button can still answer with it.
+      if (!isSolBackedGame) {
+        const [stakeMetadata, stakeBalance] = await Promise.all([metadataRead, tokenBalanceRead]);
+        const shortfall = this.describeStakeShortfall(
+          stakeBalance,
+          gameAmount,
+          stakeMetadata.decimals,
+          gameData.token_ticker,
+        );
+        if (shortfall) {
+          return { success: false, error: shortfall };
+        }
+      }
+
       const [metadata, minSolBuffer, initialTokenBalance, initialSolBalance] = await Promise.all([
-        this.wallet.getTokenMetadata(gameData.token_mint),
-        this.feeBudget.getGameSafetyBufferLamports(),
-        this.wallet.getTokenBalance(telegramId, gameData.token_mint),
-        this.wallet.getBalance(telegramId),
+        metadataRead,
+        minSolBufferRead,
+        tokenBalanceRead,
+        solBalanceRead,
       ]);
       let tokenBalance = initialTokenBalance;
       let solBalance = initialSolBalance;
-
-      const normalizedTicker = gameData.token_ticker?.toUpperCase?.() ?? "";
-      const isSolBackedGame =
-        gameData.token_mint === WSOL_MINT &&
-        (normalizedTicker === "SOL" || normalizedTicker === "WSOL");
 
       // Handle SOL-backed games (WSOL wrapping)
       if (isSolBackedGame) {
@@ -5379,28 +5451,9 @@ export class GameManager {
           return { success: false, error: ensured.error };
         }
 
+        // A successful wrap leaves at least the stake in WSOL.
         tokenBalance = ensured.tokenBalance;
         solBalance = ensured.solBalance;
-      }
-
-      // Check if user has enough tokens to cover the game stake
-      if (tokenBalance < gameAmount) {
-        const formattedBalance = this.wallet.formatTokenBalance(tokenBalance, metadata.decimals);
-        const formattedNeed = this.wallet.formatTokenBalance(gameAmount, metadata.decimals);
-        const safeTicker = escapeHtml(gameData.token_ticker);
-
-        // Check if user has no token account at all (balance = 0)
-        if (tokenBalance === 0) {
-          return {
-            success: false,
-            error: `❌ You don't have any ${safeTicker} tokens. You need ${formattedNeed} ${safeTicker} to join this game. Use /balance to check your address and transfer tokens.`,
-          };
-        }
-
-        return {
-          success: false,
-          error: `❌ Not enough ${safeTicker}. You have ${formattedBalance} but need ${formattedNeed}. Add more ${safeTicker} or reduce the amount and try again.`,
-        };
       }
 
       // SOL fee reserve check and JIT swap (for all game types - even giveaways need SOL for tx fees)
