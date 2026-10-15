@@ -128,16 +128,42 @@ describe("findNamedUser", () => {
     );
   });
 
-  test("as in /tip, a picked user without an @username takes the first typed @word instead", () => {
+  test("a picked user keeps its argument span when another @word is present", () => {
     const text = "/cf 5 Ana @bob";
     const user = { id: 1, is_bot: false, first_name: "Ana" };
     expect(findNamedUser(command(text, [picked(text, "Ana", user)]))).toEqual({
       user,
-      username: "@bob",
+      username: null,
       label: "Ana",
-      args: ["/cf", "5", "Ana"],
-      positions: [0, 1, 2],
+      args: ["/cf", "5", "@bob"],
+      positions: [0, 1, 3],
     });
+  });
+
+  test("picked names retain their span for arbitrary labels, whitespace and typed handles", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.stringMatching(/^[A-Za-z]{1,12}$/), { minLength: 1, maxLength: 4 }),
+        fc.constantFrom(" ", "  ", "\t", "\n"),
+        fc.stringMatching(/^[a-z][a-z0-9_]{4,15}$/),
+        (names, whitespace, handle) => {
+          const label = names.join(whitespace);
+          const text = ["/cf", label, "5", `@${handle}`, "SOL"].join(whitespace);
+          const user = { id: 5150, is_bot: false, first_name: names[0]! };
+          const found = findNamedUser(command(text, [picked(text, label, user)]));
+          expect(found?.user).toEqual(user);
+          expect(found?.username).toBeNull();
+          expect(found?.args).toEqual(["/cf", "5", `@${handle}`, "SOL"]);
+          expect(found?.positions).toEqual([
+            0,
+            names.length + 1,
+            names.length + 2,
+            names.length + 3,
+          ]);
+        },
+      ),
+      { numRuns: 100 },
+    );
   });
 
   test("a picked user's text starting with @ is their @username", () => {
