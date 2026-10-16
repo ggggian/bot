@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   getErrorDescription,
   getRetryAfterSeconds,
+  isBotNotAdmin,
   isChatInaccessible,
   isDuplicateContent,
   isEditProhibited,
@@ -10,10 +11,35 @@ import {
   isMessageNotModified,
   isMissingEditableContent,
   isRateLimited,
+  isRequestRefused,
   shouldFallbackToReply,
 } from "../src/utils/telegram-errors";
 
 describe("telegram error helpers", () => {
+  test("isBotNotAdmin matches only Telegram's missing admin rights refusal", () => {
+    expect(
+      isBotNotAdmin(new Error("Call to 'sendMessage' failed! (400: Bad Request: BOT_NOT_ADMIN)")),
+    ).toBe(true);
+    expect(isBotNotAdmin({ description: "Bad Request: bot_not_admin" })).toBe(true);
+    expect(isBotNotAdmin(new Error("Bad Request: not enough rights to send text messages"))).toBe(
+      false,
+    );
+    expect(isBotNotAdmin(undefined)).toBe(false);
+  });
+
+  test("isRequestRefused matches only requests Telegram answered with a refusal", () => {
+    expect(isRequestRefused({ error_code: 400, description: "Bad Request: BOT_NOT_ADMIN" })).toBe(
+      true,
+    );
+    expect(isRequestRefused({ error_code: 403, description: "Forbidden: bot was kicked" })).toBe(
+      true,
+    );
+    expect(isRequestRefused({ error_code: 429, description: "Too Many Requests" })).toBe(false);
+    expect(isRequestRefused({ error_code: 502, description: "Bad Gateway" })).toBe(false);
+    expect(isRequestRefused(new Error("Network request for 'sendMessage' failed!"))).toBe(false);
+    expect(isRequestRefused(undefined)).toBe(false);
+  });
+
   test("getErrorDescription extracts string and object messages", () => {
     expect(getErrorDescription("simple error")).toBe("simple error");
     expect(getErrorDescription({ message: "From message" })).toBe("From message");

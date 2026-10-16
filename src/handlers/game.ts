@@ -1,6 +1,6 @@
 import { parseGameCommandInput } from "./game-command-input";
 import type { Context } from "grammy";
-import { getRequiredTelegramIdForContext } from "../utils/context-helpers";
+import { getRequiredTelegramIdForContext, replyEphemeralToSender } from "../utils/context-helpers";
 import {
   CHALLENGE_IN_GROUPS_MESSAGE,
   CHALLENGE_NAMED_NEEDS_AMOUNT_MESSAGE,
@@ -52,12 +52,14 @@ export async function handleCoinflipCommand(ctx: Context & { message?: any }, de
       return;
     }
     if (parseGameCommandInput(named.args.slice(1)).mode === "menu") {
-      await ctx.reply(CHALLENGE_NAMED_NEEDS_AMOUNT_MESSAGE, { parse_mode: "HTML" });
+      await replyEphemeralToSender(ctx, CHALLENGE_NAMED_NEEDS_AMOUNT_MESSAGE, {
+        parse_mode: "HTML",
+      });
       return;
     }
     const target = await resolveNamedChallenge(ctx, named, telegramId, deps.usernames);
     if ("refusal" in target) {
-      await ctx.reply(target.refusal, { parse_mode: "HTML" });
+      await replyEphemeralToSender(ctx, target.refusal, { parse_mode: "HTML" });
       return;
     }
     await deps.createGameViaCommand(ctx, named.args, telegramId, target.challenge);
@@ -66,14 +68,14 @@ export async function handleCoinflipCommand(ctx: Context & { message?: any }, de
   // A reply may also name the replied user, but no one else.
   const replyRefusal = namedReplyRefusal(ctx.message, telegramId);
   if (replyRefusal) {
-    await ctx.reply(replyRefusal);
+    await replyEphemeralToSender(ctx, replyRefusal);
     return;
   }
   const args = findNamedUser(ctx.message)?.args ?? ctx.message?.text?.trim().split(/\s+/) ?? [];
   // Replies to another chat or forum topic name no one here, so they cannot be
   // challenges; refuse them instead of opening a game anyone could join.
   if (ctx.message?.external_reply) {
-    await ctx.reply(CHALLENGE_SAME_CHAT_MESSAGE);
+    await replyEphemeralToSender(ctx, CHALLENGE_SAME_CHAT_MESSAGE);
     return;
   }
   const input = parseGameCommandInput(args.slice(1));
@@ -81,14 +83,14 @@ export async function handleCoinflipCommand(ctx: Context & { message?: any }, de
     // The setup menu cannot carry a challenge, so ask for the amount instead of
     // opening a game anyone could join.
     if (resolveChallengeTarget(ctx.message, telegramId)) {
-      await ctx.reply(CHALLENGE_NEEDS_AMOUNT_MESSAGE, { parse_mode: "HTML" });
+      await replyEphemeralToSender(ctx, CHALLENGE_NEEDS_AMOUNT_MESSAGE, { parse_mode: "HTML" });
       return;
     }
     const override = input.token
       ? await deps.resolveTokenOverride(input.token, ctx.chat?.id)
       : undefined;
     if (input.token && !override) {
-      await ctx.reply("Token unavailable. Check its symbol or address.");
+      await replyEphemeralToSender(ctx, "Token unavailable. Check its symbol or address.");
       return;
     }
     await deps.showInteractiveSetup(ctx, telegramId, override ?? undefined);

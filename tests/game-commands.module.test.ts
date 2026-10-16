@@ -54,6 +54,9 @@ function setup(overrides: Record<string, any> = {}) {
   return { module: createGameCommandsModule(deps as any), deps, gameManager };
 }
 
+// In a group, only the sender (id 1) sees what concerns their own command.
+const ONLY_SENDER = { ephemeral_message_parameters: { receiver_user_id: 1 } };
+
 function makeCtx(text = "/cf 5 TKN", chatType = "group") {
   const replies: string[] = [];
   const deleted: number[] = [];
@@ -104,6 +107,68 @@ describe("createGameViaCommand validation", () => {
 
     expect(replies).toEqual(["❌ Amount below current minimum of 1 TKN."]);
     expect(gameManager.createGame).not.toHaveBeenCalled();
+    expect(ctx.reply.mock.calls).toEqual([
+      ["❌ Amount below current minimum of 1 TKN.", ONLY_SENDER],
+    ]);
+  });
+
+  test("rejects an amount that cannot be read, only to the sender", async () => {
+    const { module, gameManager } = setup({
+      deps: { parseAmount: async () => ({ success: false, error: "invalid_amount" }) },
+    });
+    const { ctx } = makeCtx("/cf lots");
+
+    await module.createGameViaCommand(ctx, ["/cf", "lots"], 1n, module.COINFLIP_COMMAND_OPTIONS);
+
+    expect(ctx.reply.mock.calls).toEqual([
+      [
+        "❌ Please provide a valid amount greater than 0.\n\nUsage: <code>/cf &lt;amount&gt; [TOKEN]</code>, <code>/cf &lt;amount&gt; USD</code>, or <code>/cf $&lt;usd&gt; [TOKEN]</code>",
+        { parse_mode: "HTML", ...ONLY_SENDER },
+      ],
+    ]);
+    expect(gameManager.createGame).not.toHaveBeenCalled();
+  });
+
+  test("rejects a player count out of range, only to the sender", async () => {
+    const { module, gameManager } = setup();
+    const { ctx } = makeCtx("/cf 5 TKN 999");
+
+    await module.createGameViaCommand(
+      ctx,
+      ["/cf", "5", "TKN", "999"],
+      1n,
+      module.COINFLIP_COMMAND_OPTIONS,
+    );
+
+    expect(ctx.reply.mock.calls).toEqual([
+      ["❌ Coinflip Players must be between 2-100.", ONLY_SENDER],
+    ]);
+    expect(gameManager.createGame).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    [
+      "Not enough funds: your balance is 1 TKN",
+      "❌ Failed to create game: insufficient funds. Please add more funds and try again.",
+    ],
+    [
+      "Game creation rate limit reached",
+      "❌ Too many games are being created. Please try again shortly.",
+    ],
+    [undefined, "❌ Failed to create game. Please try again."],
+  ])("a failed creation (%s) is reported only to the sender", async (error, text) => {
+    const { module, gameManager } = setup({
+      gameManager: { createGame: mock(async () => ({ success: false, error })) },
+    });
+    const { ctx } = makeCtx();
+
+    await module.createGameViaCommand(ctx, ["/cf", "5"], 1n, module.COINFLIP_COMMAND_OPTIONS);
+
+    expect(ctx.reply.mock.calls).toEqual([
+      ["⏳ Creating game…"],
+      [text, { parse_mode: "HTML", ...ONLY_SENDER }],
+    ]);
+    expect(gameManager.createGameMessage).not.toHaveBeenCalled();
   });
 
   test("rejects a token amount above the wallet balance", async () => {
@@ -122,6 +187,12 @@ describe("createGameViaCommand validation", () => {
     expect(replies).toEqual(["❌ Not enough TKN. Add more TKN or try a smaller amount."]);
     expect(deps.wallet.getBalance).not.toHaveBeenCalled();
     expect(gameManager.createGame).not.toHaveBeenCalled();
+    expect(ctx.reply.mock.calls).toEqual([
+      [
+        "❌ Not enough TKN. Add more TKN or try a smaller amount.",
+        { parse_mode: "HTML", ...ONLY_SENDER },
+      ],
+    ]);
   });
 
   test("counts native SOL toward a WSOL game and names it wrapped SOL when short", async () => {
@@ -135,7 +206,7 @@ describe("createGameViaCommand validation", () => {
         getBalance: mock(async () => 1_999_999),
       },
     });
-    const { ctx, replies } = makeCtx();
+    const { ctx } = makeCtx();
 
     await module.createGameViaCommand(
       ctx,
@@ -144,8 +215,11 @@ describe("createGameViaCommand validation", () => {
       module.COINFLIP_COMMAND_OPTIONS,
     );
 
-    expect(replies).toEqual([
-      "❌ Not enough SOL or wrapped SOL. Add more SOL or wrapped SOL and try again.",
+    expect(ctx.reply.mock.calls).toEqual([
+      [
+        "❌ Not enough SOL or wrapped SOL. Add more SOL or wrapped SOL and try again.",
+        { parse_mode: "HTML", ...ONLY_SENDER },
+      ],
     ]);
     expect(gameManager.createGame).not.toHaveBeenCalled();
   });
@@ -294,6 +368,9 @@ describe("createGameViaCommand outcomes", () => {
 
     expect(replies).toEqual(["❌ Error creating giveaway game. Please try again."]);
     expect(errorSpy.mock.calls[0]?.[0]).toBe("Error in command-based giveaway:");
+    expect(ctx.reply.mock.calls).toEqual([
+      ["❌ Error creating giveaway game. Please try again.", ONLY_SENDER],
+    ]);
   });
 
   test("a failed placeholder cleanup is logged, not surfaced", async () => {
@@ -415,6 +492,9 @@ describe("handleGiveawayCommand", () => {
 
     expect(replies).toEqual(["Token unavailable. Check its symbol or address."]);
     expect(deps.startInteractiveGameSetup).not.toHaveBeenCalled();
+    expect(ctx.reply.mock.calls).toEqual([
+      ["Token unavailable. Check its symbol or address.", ONLY_SENDER],
+    ]);
   });
 
   test("creates a giveaway from arguments", async () => {
@@ -441,6 +521,9 @@ describe("handleGiveawayCommand", () => {
     await module.handleGiveawayCommand(ctx);
 
     expect(replies).toEqual(["❌ Error setting up giveaway game. Please try again."]);
+    expect(ctx.reply.mock.calls).toEqual([
+      ["❌ Error setting up giveaway game. Please try again.", ONLY_SENDER],
+    ]);
   });
 });
 

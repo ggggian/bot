@@ -4,8 +4,11 @@ import { buildFaucetMessage, createFaucetModule } from "../src/handlers/faucet";
 import { FaucetDatabase } from "../src/utils/faucet-database";
 import { inferMaxPlayers } from "../src/utils/arg-parsing";
 import { resetTestDatabase } from "./helpers/database";
+import { telegramRefusal } from "./helpers/telegram-errors";
 
 let db: FaucetDatabase;
+// In the group, a refused /faucet reaches only its creator (id 10).
+const ONLY_CREATOR = { ephemeral_message_parameters: { receiver_user_id: 10 } };
 const publicKey = new PublicKey("11111111111111111111111111111111");
 
 const parsed = {
@@ -94,7 +97,7 @@ const createHarness = (
 
   const commandContext = (text: string) =>
     ({
-      chat: { id: -100 },
+      chat: { id: -100, type: "supergroup" },
       from: { id: 10, username: "creator" },
       message: { text },
       reply: async (replyText: string, replyOptions: any) => {
@@ -105,10 +108,11 @@ const createHarness = (
     }) as any;
   const callbackContext = (userId: number) =>
     ({
+      chat: { id: -100, type: "supergroup" },
       from: { id: userId, username: `collector${userId}` },
       callbackQuery: {
         id: `callback-${userId}`,
-        message: { message_id: 55, chat: { id: -100 } },
+        message: { message_id: 55, chat: { id: -100, type: "supergroup" } },
       },
       api: {
         editMessageText: async (
@@ -177,14 +181,22 @@ describe("faucet handler", () => {
     await harness.module.handleCommand(harness.commandContext("/faucet 1 2"));
     expect(db.getFaucet(1)).not.toBeNull();
     expect(db.getFaucet(2)).toBeNull();
-    expect(harness.replies.at(-1)?.text).toContain("Not enough TOK");
+    expect(harness.replies.at(-1)).toEqual({
+      text: "❌ Not enough TOK. The faucet needs the full amount for all 2 claims.",
+      options: { parse_mode: "HTML", ...ONLY_CREATOR },
+    });
   });
 
   test("rejects creation when the creator cannot fund the full faucet", async () => {
     const harness = createHarness({ balance: 399 });
     await harness.module.handleCommand(harness.commandContext("/faucet 1 4"));
     expect(db.getFaucet(1)).toBeNull();
-    expect(harness.replies.at(-1)?.text).toContain("Not enough TOK");
+    expect(harness.replies).toEqual([
+      {
+        text: "❌ Not enough TOK. The faucet needs the full amount for all 4 claims.",
+        options: { parse_mode: "HTML", ...ONLY_CREATOR },
+      },
+    ]);
   });
 
   test("does not create a faucet when balance verification is unavailable", async () => {
@@ -196,7 +208,9 @@ describe("faucet handler", () => {
     await harness.module.handleCommand(harness.commandContext("/faucet 1 4"));
 
     expect(db.getFaucet(1)).toBeNull();
-    expect(harness.replies.at(-1)?.text).toContain("Could not verify your balance");
+    expect(harness.replies).toEqual([
+      { text: "❌ Could not verify your balance. Please try again.", options: ONLY_CREATOR },
+    ]);
   });
 
   test("rejects unsafe total multiplication", async () => {
@@ -206,7 +220,9 @@ describe("faucet handler", () => {
     });
     await harness.module.handleCommand(harness.commandContext("/faucet 1 2"));
     expect(db.getFaucet(1)).toBeNull();
-    expect(harness.replies.at(-1)?.text).toContain("total faucet amount is too large");
+    expect(harness.replies).toEqual([
+      { text: "❌ The total faucet amount is too large.", options: ONLY_CREATOR },
+    ]);
   });
 
   test("pays a unique claimant and updates the live progress", async () => {
@@ -263,6 +279,111 @@ describe("faucet handler", () => {
       status: "paid",
       transaction_signature: "retry-signature",
     });
+  });
+
+  test("a failed payment is shown only to the claimant who tapped", async () => {
+    const harness = createHarness({
+      transfer: async () => {
+        throw new Error("temporary RPC failure");
+      },
+    });
+    await harness.module.handleCommand(harness.commandContext("/faucet 1 1"));
+    harness.replies.length = 0;
+
+    await harness.module.handleClaim(harness.callbackContext(20), 1);
+
+    expect(harness.replies).toEqual([
+      {
+        text: "❌ Payment failed. Your faucet slot was released; please try again.",
+        options: {
+          disable_notification: true,
+          reply_to_message_id: 55,
+          ephemeral_message_parameters: { receiver_user_id: 20, callback_query_id: "callback-20" },
+        },
+      },
+    ]);
+  });
+
+  test("a failed claim reaches the group as a regular reply when Telegram refuses the private one", async () => {
+    let balanceAvailable = true;
+    const harness = createHarness({
+      getBalance: async () => {
+        if (!balanceAvailable) throw new Error("RPC unavailable");
+        return 100;
+      },
+    });
+    await harness.module.handleCommand(harness.commandContext("/faucet 1 1"));
+    balanceAvailable = false;
+    const attempts: Array<[string, any]> = [];
+    const ctx = harness.callbackContext(20);
+    ctx.reply = async (text: string, options: any) => {
+      attempts.push([text, options]);
+      if (options.ephemeral_message_parameters) {
+        throw telegramRefusal("Bad Request: BOT_NOT_ADMIN");
+      }
+    };
+
+    await harness.module.handleClaim(ctx, 1);
+
+    expect(attempts).toEqual([
+      [
+        "❌ Could not verify the faucet balance. Please try again.",
+        {
+          disable_notification: true,
+          reply_to_message_id: 55,
+          ephemeral_message_parameters: { receiver_user_id: 20, callback_query_id: "callback-20" },
+        },
+      ],
+      [
+        "❌ Could not verify the faucet balance. Please try again.",
+        {
+          disable_notification: true,
+          reply_to_message_id: 55,
+          ephemeral_message_parameters: { receiver_user_id: 20 },
+        },
+      ],
+      [
+        "❌ Could not verify the faucet balance. Please try again.",
+        { disable_notification: true, reply_to_message_id: 55 },
+      ],
+    ]);
+  });
+
+  test("a failed claim is only logged when Telegram refuses every reply", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let balanceAvailable = true;
+      const harness = createHarness({
+        getBalance: async () => {
+          if (!balanceAvailable) throw new Error("RPC unavailable");
+          return 100;
+        },
+      });
+      await harness.module.handleCommand(harness.commandContext("/faucet 1 1"));
+      balanceAvailable = false;
+      harness.edits.length = 0;
+      const attempts: string[] = [];
+      const ctx = harness.callbackContext(20);
+      ctx.reply = async (text: string) => {
+        attempts.push(text);
+        throw telegramRefusal("Bad Request: BOT_NOT_ADMIN");
+      };
+
+      await expect(harness.module.handleClaim(ctx, 1)).resolves.toBeUndefined();
+
+      expect(attempts).toEqual([
+        "❌ Could not verify the faucet balance. Please try again.",
+        "❌ Could not verify the faucet balance. Please try again.",
+        "❌ Could not verify the faucet balance. Please try again.",
+      ]);
+      expect(warn.mock.calls).toEqual([
+        ["Failed to tell the claimant about the failed claim:", "Bad Request: BOT_NOT_ADMIN"],
+      ]);
+      expect(db.getClaim(1, 20n)?.status).toBe("failed");
+      expect(harness.edits).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("closes an active faucet when the creator no longer has enough balance", async () => {
@@ -552,7 +673,15 @@ describe("faucet handler edge cases", () => {
 
     await harness.module.handleCommand(harness.commandContext("/faucet"));
 
-    expect(harness.replies[0]?.text).toStartWith("Usage: <code>/faucet &lt;amount&gt;");
+    expect(harness.replies).toEqual([
+      {
+        text:
+          "Usage: <code>/faucet &lt;amount&gt; [USD|TOKEN] [users]</code>\n" +
+          "Examples: <code>/faucet $1 4</code>, <code>/faucet 1 USD 4</code>, " +
+          "<code>/faucet 1 TIMBA 4</code>",
+        options: { parse_mode: "HTML", ...ONLY_CREATOR },
+      },
+    ]);
     expect(db.getFaucet(1)).toBeNull();
   });
 
@@ -571,7 +700,9 @@ describe("faucet handler edge cases", () => {
 
     await harness.module.handleCommand(harness.commandContext("/faucet nope"));
 
-    expect(harness.replies).toEqual([{ text: "invalid amount", options: { parse_mode: "HTML" } }]);
+    expect(harness.replies).toEqual([
+      { text: "invalid amount", options: { parse_mode: "HTML", ...ONLY_CREATOR } },
+    ]);
   });
 
   test("rejects a claim count above the limit", async () => {
@@ -579,7 +710,9 @@ describe("faucet handler edge cases", () => {
 
     await harness.module.handleCommand(harness.commandContext("/faucet 1 101"));
 
-    expect(harness.replies[0]?.text).toStartWith("❌ Faucet ");
+    expect(harness.replies).toEqual([
+      { text: "❌ Faucet Players must be between 1-100.", options: ONLY_CREATOR },
+    ]);
     expect(db.getFaucet(1)).toBeNull();
   });
 

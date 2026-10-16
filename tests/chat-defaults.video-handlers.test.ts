@@ -111,6 +111,7 @@ describe("Chat defaults video settings handlers", () => {
       getOracleMaxPlayers: () => 20,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
     });
 
     test("displays bot default when no video settings", async () => {

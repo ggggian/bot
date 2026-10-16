@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   answers,
   calls,
+  failApiMethod,
+  overrideApiMethod,
   resetCalls,
   restoreStubs,
   press,
@@ -79,11 +81,129 @@ describe("/start and /balance", () => {
     expect(cardText()).toContain("SOL: <code>2</code> SOL");
   });
 
-  test("/balance in a group sends the wallet privately", async () => {
-    await sendText("/balance", { userId: USER, chatId: -4_401 });
+  const GROUP = -4_401;
+  const SUMMARY_FOOTER = "<i>The full wallet menu is in our private chat.</i>";
+  const DM_NOTICE = [
+    "❌ <b>I can’t DM you yet</b>",
+    "",
+    "Start a private chat with the bot so I can share your balances.",
+    'Tap <a href="https://t.me/test_bot">@test_bot</a> and press <b>Start</b>, then run /balance again.',
+  ].join("\n");
+  const groupMessages = () =>
+    calls.filter((call) => call.method === "sendMessage" && call.payload.chat_id === GROUP);
+  const dmCard = () => calls.find((call) => call.payload.chat_id === String(USER));
+  const failInGroup = (description: string, when: (payload: any) => boolean = () => true) => {
+    overrideApiMethod("sendMessage", (payload) =>
+      payload.chat_id === GROUP && when(payload)
+        ? { ok: false, error_code: 400, description }
+        : { message_id: 700_001, date: 0, chat: { id: payload.chat_id, type: "supergroup" } },
+    );
+  };
 
-    expect(walletCard()?.payload.chat_id).toBe(String(USER));
-    expect(cardText()).toContain("SOL: <code>2</code> SOL");
+  test("/balance in a group sends the wallet privately and a copy only the sender sees", async () => {
+    await sendText("/balance", { userId: USER, chatId: GROUP, messageId: 4_402 });
+
+    const caption = String(dmCard()?.payload.caption);
+    expect(caption).toContain("SOL: <code>2</code> SOL");
+    expect(groupMessages().map((call) => call.payload)).toEqual([
+      {
+        chat_id: GROUP,
+        text: `${caption}\n\n${SUMMARY_FOOTER}`,
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        reply_parameters: { message_id: 4_402, allow_sending_without_reply: true },
+        ephemeral_message_parameters: { receiver_user_id: USER },
+      },
+    ]);
+  });
+
+  test("every /balance in a group shows its own copy, as a reply to that command", async () => {
+    await sendText("/balance", { userId: USER, chatId: GROUP, messageId: 4_403 });
+    await sendText("/balance", { userId: USER, chatId: GROUP, messageId: 4_404 });
+
+    expect(groupMessages().map((call) => call.payload.reply_parameters.message_id)).toEqual([
+      4_403, 4_404,
+    ]);
+    expect(groupMessages()[1]!.payload.text).toBe(groupMessages()[0]!.payload.text);
+  });
+
+  test("/balance in a group posts nothing there when the bot is not an admin", async () => {
+    failInGroup("Bad Request: BOT_NOT_ADMIN");
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await sendText("/balance", { userId: USER, chatId: GROUP });
+
+      expect(String(dmCard()?.payload.caption)).toContain("SOL: <code>2</code> SOL");
+      expect(groupMessages()).toHaveLength(1);
+      expect(groupMessages()[0]!.payload.ephemeral_message_parameters).toEqual({
+        receiver_user_id: USER,
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("/balance in a group logs any other refusal of the copy and keeps the DM", async () => {
+    failInGroup("Bad Request: chat not found");
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await sendText("/balance", { userId: USER, chatId: GROUP });
+
+      expect(String(dmCard()?.payload.caption)).toContain("SOL: <code>2</code> SOL");
+      expect(groupMessages()).toHaveLength(1);
+      expect(warn.mock.calls).toEqual([
+        ["Failed to show the wallet summary in the group:", "Bad Request: chat not found"],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("/balance in a group tells only the sender, in reply to it, to start a DM when the bot cannot DM them", async () => {
+    failApiMethod("sendVideo", "Forbidden: bot can't initiate conversation with a user", 403);
+
+    await sendText("/balance", { userId: USER, chatId: GROUP, messageId: 4_405 });
+
+    expect(groupMessages().map((call) => call.payload)).toEqual([
+      {
+        chat_id: GROUP,
+        text: DM_NOTICE,
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        reply_parameters: { message_id: 4_405, allow_sending_without_reply: true },
+        ephemeral_message_parameters: { receiver_user_id: USER },
+      },
+    ]);
+  });
+
+  test("/balance in a group posts the DM notice publicly when the bot is not an admin", async () => {
+    failApiMethod("sendVideo", "Forbidden: bot can't initiate conversation with a user", 403);
+    failInGroup(
+      "Bad Request: BOT_NOT_ADMIN",
+      (payload) => "ephemeral_message_parameters" in payload,
+    );
+
+    await sendText("/balance", { userId: USER, chatId: GROUP, messageId: 4_406 });
+
+    const quote = { message_id: 4_406, allow_sending_without_reply: true };
+    expect(groupMessages().map((call) => call.payload)).toEqual([
+      {
+        chat_id: GROUP,
+        text: DM_NOTICE,
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        reply_parameters: quote,
+        ephemeral_message_parameters: { receiver_user_id: USER },
+      },
+      {
+        chat_id: GROUP,
+        text: DM_NOTICE,
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        reply_parameters: quote,
+      },
+    ]);
   });
 });
 

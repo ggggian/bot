@@ -161,6 +161,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
     });
 
     expect(summary).toContain("AAA");
@@ -190,6 +191,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
     });
 
     expect(summary).toContain("🚨 Buy alerts: On, AAA, min 0.05 SOL, media Custom");
@@ -212,6 +214,9 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 25,
       isUserGroupAdmin: async () => true,
       replyToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         replies.push(text);
       },
     });
@@ -251,6 +256,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
     });
 
     expect(summary).toContain("set by @alice");
@@ -274,6 +280,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
     });
 
     expect(summary).toContain("set by @bob");
@@ -294,6 +301,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
     });
 
     expect(summary).toContain("set by User 999888");
@@ -315,6 +323,9 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 25,
       isUserGroupAdmin: async () => true,
       replyToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         replies.push(text);
       },
     });
@@ -347,6 +358,9 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 25,
       isUserGroupAdmin: async () => true,
       replyToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         replies.push(text);
       },
     });
@@ -382,6 +396,9 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 25,
       isUserGroupAdmin: async () => true,
       replyToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         replies.push(text);
       },
     });
@@ -420,6 +437,9 @@ describe("chat defaults module", () => {
       replyToMessage: async (_ctx, text) => {
         replies.push(text);
       },
+      replyErrorToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
     });
 
     const session: InputSessionState = {
@@ -436,9 +456,10 @@ describe("chat defaults module", () => {
     expect(replies.some((text) => text.includes("NEWP"))).toBe(true);
   });
 
-  test("handleSettingsInput rejects replies from non-initiators", async () => {
+  test("handleSettingsInput rejects replies from non-initiators, only to them", async () => {
     const tokenManager = baseTokenManager();
     const { ctx, replies } = buildMockContext();
+    const senderOnly: string[] = [];
     ctx.from.id = 222;
 
     const module = createChatDefaultsModule({
@@ -453,6 +474,9 @@ describe("chat defaults module", () => {
       replyToMessage: async (_ctx, text) => {
         replies.push(text);
       },
+      replyErrorToMessage: async (_ctx, text) => {
+        senderOnly.push(text);
+      },
     });
 
     const session: InputSessionState = {
@@ -466,7 +490,10 @@ describe("chat defaults module", () => {
     await module.handleSettingsInput(ctx as any, session, "AAA");
 
     expect(tokenManager.getChatDefaultToken()).toBeNull();
-    expect(replies.some((text) => text.includes("prompt is no longer active"))).toBe(true);
+    expect(senderOnly).toEqual([
+      "❌ <b>This prompt is no longer active for you.</b>\n\nOpen the defaults menu again to continue.",
+    ]);
+    expect(replies).toEqual([]);
   });
 
   test("handleSettingsInput requires initiator to be admin", async () => {
@@ -483,6 +510,9 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 25,
       isUserGroupAdmin: async () => false,
       replyToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         replies.push(text);
       },
     });
@@ -534,6 +564,9 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         replies.push(text);
       },
     });
@@ -636,6 +669,9 @@ describe("chat defaults module", () => {
       replyToMessage: async (_ctx, text) => {
         messagesReplied.push(text);
       },
+      replyErrorToMessage: async (_ctx, text) => {
+        messagesReplied.push(text);
+      },
     });
 
     // Try to change a setting as non-admin
@@ -683,6 +719,9 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => false, // NOT admin
       replyToMessage: async (_ctx, text) => {
+        messagesReplied.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         messagesReplied.push(text);
       },
     });
@@ -737,6 +776,9 @@ describe("chat defaults module", () => {
       replyToMessage: async (_ctx, text) => {
         messagesReplied.push(text);
       },
+      replyErrorToMessage: async (_ctx, text) => {
+        messagesReplied.push(text);
+      },
     });
 
     // Try to cancel as non-admin
@@ -780,6 +822,9 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         replies.push(text);
       },
     });
@@ -878,6 +923,9 @@ describe("chat defaults module", () => {
       replyToMessage: async (_ctx, text) => {
         replies.push(text);
       },
+      replyErrorToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
     });
 
     // 1. Open Video Menu
@@ -957,6 +1005,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => false, // NOT admin
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
     });
 
     // List of restricted actions
@@ -1015,6 +1064,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
     });
 
     await mockBot.dispatch("chat_defaults_public_game_feed", ctx);
@@ -1056,6 +1106,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
       buyAlerts: {
         refresh: () => {
           refreshed += 1;
@@ -1115,6 +1166,9 @@ describe("chat defaults module", () => {
       replyToMessage: async (_ctx, text) => {
         replies.push(text);
       },
+      replyErrorToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
     });
 
     await mockBot.dispatch("chat_defaults_set_buy_alerts_min_custom", ctx);
@@ -1171,6 +1225,9 @@ describe("chat defaults module", () => {
       replyToMessage: async (_ctx, text) => {
         replies.push(text);
       },
+      replyErrorToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
     });
 
     await mockBot.dispatch("chat_defaults_buy_alerts_media", ctx);
@@ -1212,6 +1269,7 @@ describe("chat defaults module", () => {
       getOracleMaxPlayers: () => 25,
       isUserGroupAdmin: async () => true,
       replyToMessage: async () => {},
+      replyErrorToMessage: async () => {},
       buyAlerts: {
         refresh: () => {
           refreshed += 1;
@@ -1272,6 +1330,9 @@ describe("chat defaults menus and inputs", () => {
       getOracleMaxPlayers: () => 50,
       isUserGroupAdmin: async () => options.admin !== false,
       replyToMessage: async (_ctx, text) => {
+        replies.push(text);
+      },
+      replyErrorToMessage: async (_ctx, text) => {
         replies.push(text);
       },
       buyAlerts: {
@@ -1678,6 +1739,7 @@ describe("/default command", () => {
 
   const run = async (args: string[], options: { chatType?: string; admin?: boolean } = {}) => {
     const replies: string[] = [];
+    const senderOnly: string[] = [];
     const tokenManager = baseTokenManager();
     const module = createChatDefaultsModule({
       bot: createMockBot() as any,
@@ -1691,6 +1753,10 @@ describe("/default command", () => {
       replyToMessage: async (_ctx, text) => {
         replies.push(text);
       },
+      replyErrorToMessage: async (_ctx, text) => {
+        replies.push(text);
+        senderOnly.push(text);
+      },
     });
     const ctx: any = {
       chat: { id: 77, type: options.chatType ?? "group" },
@@ -1703,7 +1769,7 @@ describe("/default command", () => {
       api: { editMessageText: async () => ({}) },
     };
     await module.handleDefaultCommand(ctx, args);
-    return { replies, tokenManager };
+    return { replies, senderOnly, tokenManager };
   };
 
   test("is refused in private chats", async () => {
@@ -1723,14 +1789,18 @@ describe("/default command", () => {
     expect(tokenManager.getChatDefaultToken(77)).toBeNull();
   });
 
-  test("asks for a ticker when the argument is empty", async () => {
-    expect((await run(["/default", ""])).replies).toEqual(["Please provide a token ticker."]);
+  test("asks only the sender for a ticker when the argument is empty", async () => {
+    const { replies, senderOnly } = await run(["/default", ""]);
+    expect(replies).toEqual(["Please provide a token ticker."]);
+    expect(senderOnly).toEqual(["Please provide a token ticker."]);
   });
 
-  test("clears the chat token", async () => {
-    expect((await run(["/default", "remove"])).replies).toEqual([
+  test("clears the chat token for everyone to see", async () => {
+    const { replies, senderOnly } = await run(["/default", "remove"]);
+    expect(replies).toEqual([
       "✅ Default token cleared for this chat. Using bot default token now.",
     ]);
+    expect(senderOnly).toEqual([]);
   });
 
   test("sets a known token", async () => {

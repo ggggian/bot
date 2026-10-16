@@ -11,6 +11,7 @@ import { escapeHtml } from "../utils/format-amount";
 import QRCode from "qrcode";
 import { respondWithMenu } from "../utils/menu-response";
 import { showCustomAmountPrompt } from "../utils/wallet-ui";
+import { replyEphemeralToSender } from "../utils/context-helpers";
 import {
   findInputSession,
   getInputSession,
@@ -139,7 +140,7 @@ export function registerLightningDeposits(
     if (ctx.chat?.type === "private" && ctx.from) return true;
     if (ctx.callbackQuery)
       await ctx.answerCallbackQuery({ text: "Open a private chat with the bot to deposit." });
-    else await ctx.reply("Open a private chat with the bot to deposit.");
+    else await replyEphemeralToSender(ctx, "Open a private chat with the bot to deposit.");
     return false;
   };
   // Navigation invalidates amount prompts and detaches status updates from reused cards.

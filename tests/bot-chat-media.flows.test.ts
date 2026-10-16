@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   bot,
   botModule,
+  callsTo,
   failApiMethod,
+  lastCall,
   messageCalls,
   stub,
-  lastText,
   overrideApiMethod,
   resetCalls,
   restoreStubs,
@@ -103,6 +104,17 @@ const sendMedia = (
     },
   } as any);
 
+// A refused media reply reaches only the admin who sent it, as a reply to it.
+const expectSenderOnly = (text: string) => {
+  expect(lastCall("sendMessage")?.payload).toEqual({
+    chat_id: CHAT,
+    text,
+    parse_mode: "HTML",
+    reply_to_message_id: updateId,
+    ephemeral_message_parameters: { receiver_user_id: ADMIN },
+  });
+};
+
 const video = {
   video: { file_id: "video-file", file_unique_id: "v", width: 1, height: 1, duration: 1 },
 };
@@ -159,7 +171,11 @@ describe("media replies for chat defaults", () => {
 
     await sendMedia(documentMessage, { replyTo: PROMPT });
 
-    expect(lastText()).toContain("Please send media directly");
+    expectSenderOnly(
+      "❌ <b>Please send media directly</b>\n\n" +
+        "Only <b>photos</b>, <b>videos</b>, or <b>GIFs</b> sent directly are accepted.\n\n" +
+        "Files sent as documents are not supported.",
+    );
     expect(getInputSession(`${CHAT}_${PROMPT}`)).toBeUndefined();
   });
 
@@ -168,7 +184,9 @@ describe("media replies for chat defaults", () => {
 
     await sendMedia(video, { replyTo: PROMPT });
 
-    expect(lastText()).toContain("This prompt is no longer active for you.");
+    expectSenderOnly(
+      "❌ <b>This prompt is no longer active for you.</b>\n\nOpen the defaults menu again to continue.",
+    );
     expect(botModule.__test_getChatDatabase().getChatGameSettings(CHAT)).toBeNull();
   });
 
@@ -204,10 +222,12 @@ describe("media replies for chat defaults", () => {
       upsert.mockRestore();
     }
 
-    expect(lastText()).toContain("Error processing media");
+    expectSenderOnly("❌ <b>Error processing media</b>\n\nPlease try again.");
     expect(getInputSession(`${CHAT}_${PROMPT}`)).toBeUndefined();
   });
 });
+
+const WSOL = "So11111111111111111111111111111111111111112";
 
 describe("typed replies to chat default prompts", () => {
   const minPrompt = (initiatorId = String(ADMIN)) =>
@@ -221,6 +241,107 @@ describe("typed replies to chat default prompts", () => {
 
   const sendReply = (text: string, options: { from?: number | null; replyTo?: number } = {}) =>
     sendMedia({ text }, { replyTo: PROMPT, ...options });
+
+  const promptFor = (fields: Record<string, unknown>) =>
+    setInputSession(`${CHAT}_${PROMPT}`, {
+      type: "chat_defaults",
+      chatId: CHAT,
+      messageId: PROMPT,
+      initiatorId: String(ADMIN),
+      ...fields,
+    } as any);
+  // The refusal goes only to the admin who typed; the menu that follows stays public.
+  const expectRefusalOnlyToSender = (text: string) => {
+    const [refusal, ...rest] = callsTo("sendMessage").map((call) => call.payload);
+    expect(refusal).toEqual({
+      chat_id: CHAT,
+      text,
+      parse_mode: "HTML",
+      reply_to_message_id: updateId,
+      ephemeral_message_parameters: { receiver_user_id: ADMIN },
+    });
+    expect(rest.filter((payload) => "ephemeral_message_parameters" in payload)).toEqual([]);
+  };
+
+  test.each([
+    [
+      "an invalid player count",
+      { setting: "coinflip" },
+      "many",
+      "❌ Invalid number. Please enter a value between 2-100.",
+    ],
+    [
+      "an invalid timeout",
+      { setting: "timeout" },
+      "soon",
+      "❌ Please enter a valid number of seconds.",
+    ],
+    [
+      "an invalid media file id",
+      { setting: "video_coinflip" },
+      "abc",
+      "❌ Invalid file ID. Please send a valid Telegram file ID.",
+    ],
+    [
+      "an invalid minimum buy",
+      { target: "buy_alerts_min_custom" },
+      "lots",
+      "❌ Invalid amount. Enter a number between 0.001 and 10000 SOL, or 0 / off.",
+    ],
+    [
+      "an expired minimum buy prompt",
+      { target: "buy_alerts_min_custom", chatId: undefined },
+      "1",
+      "❌ Session expired. Please try again.",
+    ],
+    [
+      "an invalid join rate",
+      { target: "join_rate_custom" },
+      "999",
+      "❌ Invalid rate. Please enter a number between 0 and 30.",
+    ],
+    [
+      "an expired join rate prompt",
+      { target: "join_rate_custom", chatId: undefined },
+      "1",
+      "❌ Session expired. Please try again.",
+    ],
+  ] as const)(
+    "%s is answered only to the admin who typed it",
+    async (_name, fields, input, text) => {
+      promptFor(fields);
+
+      await sendReply(input);
+
+      expectRefusalOnlyToSender(text);
+    },
+  );
+
+  test("an unknown token is answered only to the admin who typed it", async () => {
+    botModule.__test_setTokenManager({
+      getKnownTokenByTicker: () => null,
+      getSupportedGameTokens: () => [{ ticker: "AAA" }],
+      getDefaultToken: () => ({ token_mint: WSOL, token_ticker: "SOL", decimals: 9 }),
+      getChatDefaultToken: () => ({ token_mint: WSOL, token_ticker: "SOL", decimals: 9 }),
+    } as any);
+    promptFor({ setting: "token" });
+
+    await sendReply("nope");
+
+    expectRefusalOnlyToSender('❌ Token "NOPE" not found.\n\n📋 Supported tokens:\n• AAA\n');
+  });
+
+  test("a non-admin's typed reply is answered only to them", async () => {
+    overrideApiMethod("getChatMember", (payload) => ({
+      status: "member",
+      user: { id: payload.user_id },
+    }));
+    minPrompt();
+
+    await sendReply("0.5");
+
+    expectRefusalOnlyToSender("🔒 Only group administrators can update chat defaults.");
+  });
 
   test("an admin's typed minimum is saved for buy alerts", async () => {
     minPrompt();

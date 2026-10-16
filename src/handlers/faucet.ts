@@ -8,7 +8,8 @@ import {
 } from "../utils/faucet-database";
 import type { InferPlayersResult } from "../utils/arg-parsing";
 import { getTelegramUserDisplayName } from "../utils/telegram-display";
-import { isBotInitiationForbidden } from "../utils/telegram-errors";
+import { getErrorDescription, isBotInitiationForbidden } from "../utils/telegram-errors";
+import { replyEphemeralToSender, replyToCallbackMessage } from "../utils/context-helpers";
 
 const DEFAULT_MAX_CLAIMS = 4;
 const MAX_CLAIMS = 100;
@@ -167,6 +168,16 @@ export const buildFaucetMessage = (progress: FaucetProgress): string => {
   ].join("\n");
 };
 
+// A failed claim concerns only the claimant, so the reply is ephemeral; only
+// if Telegram refuses that does it reach the group, as before.
+const tellClaimant = async (ctx: Context, text: string): Promise<void> => {
+  try {
+    await replyToCallbackMessage(ctx, text);
+  } catch (error) {
+    console.warn("Failed to tell the claimant about the failed claim:", getErrorDescription(error));
+  }
+};
+
 export const createFaucetModule = (deps: FaucetModuleDeps) => {
   const now = deps.now ?? Date.now;
   const activeClaimOperations = new Set<string>();
@@ -314,7 +325,8 @@ export const createFaucetModule = (deps: FaucetModuleDeps) => {
     if (creatorId == null || !ctx.chat) return;
     const args = ctx.message?.text?.trim().split(/\s+/) ?? [];
     if (args.length < 2) {
-      await ctx.reply(
+      await replyEphemeralToSender(
+        ctx,
         "Usage: <code>/faucet &lt;amount&gt; [USD|TOKEN] [users]</code>\n" +
           "Examples: <code>/faucet $1 4</code>, <code>/faucet 1 USD 4</code>, " +
           "<code>/faucet 1 TIMBA 4</code>",
@@ -327,7 +339,9 @@ export const createFaucetModule = (deps: FaucetModuleDeps) => {
     // native SOL instead of being normalized to WSOL as it is for games.
     const parsedResult = await deps.parseAmount(args, 1, ctx.chat.id, "tip");
     if (!parsedResult.success) {
-      await ctx.reply(deps.formatAmountError(parsedResult), { parse_mode: "HTML" });
+      await replyEphemeralToSender(ctx, deps.formatAmountError(parsedResult), {
+        parse_mode: "HTML",
+      });
       return;
     }
     const parsed = parsedResult.data;
@@ -340,20 +354,20 @@ export const createFaucetModule = (deps: FaucetModuleDeps) => {
       MAX_CLAIMS,
     );
     if (!inferred.ok) {
-      await ctx.reply(`❌ Faucet ${inferred.error}`);
+      await replyEphemeralToSender(ctx, `❌ Faucet ${inferred.error}`);
       return;
     }
 
     const total = parsed.amount * inferred.value;
     if (!Number.isSafeInteger(total) || total <= 0) {
-      await ctx.reply("❌ The total faucet amount is too large.");
+      await replyEphemeralToSender(ctx, "❌ The total faucet amount is too large.");
       return;
     }
     let balance: number;
     try {
       balance = await deps.getBalance(creatorId, parsed);
     } catch {
-      await ctx.reply("❌ Could not verify your balance. Please try again.");
+      await replyEphemeralToSender(ctx, "❌ Could not verify your balance. Please try again.");
       return;
     }
     const alreadyReserved = deps.database.getReservedAmount(
@@ -363,7 +377,8 @@ export const createFaucetModule = (deps: FaucetModuleDeps) => {
       now(),
     );
     if (balance - alreadyReserved < total) {
-      await ctx.reply(
+      await replyEphemeralToSender(
+        ctx,
         `❌ Not enough ${escapeHtml(parsed.tokenTicker)}. The faucet needs the full amount for all ${inferred.value} claims.`,
         { parse_mode: "HTML" },
       );
@@ -461,9 +476,7 @@ export const createFaucetModule = (deps: FaucetModuleDeps) => {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         deps.database.failClaim(faucetId, claimantId, message, now());
-        await ctx.reply("❌ Could not verify the faucet balance. Please try again.", {
-          reply_to_message_id: faucet.message_id ?? undefined,
-        });
+        await tellClaimant(ctx, "❌ Could not verify the faucet balance. Please try again.");
         await render(ctx, faucetId);
         return;
       }
@@ -521,9 +534,10 @@ export const createFaucetModule = (deps: FaucetModuleDeps) => {
           );
         } else {
           deps.database.failClaim(faucetId, claimantId, message, now());
-          await ctx.reply("❌ Payment failed. Your faucet slot was released; please try again.", {
-            reply_to_message_id: faucet.message_id ?? undefined,
-          });
+          await tellClaimant(
+            ctx,
+            "❌ Payment failed. Your faucet slot was released; please try again.",
+          );
         }
         await render(ctx, faucetId);
         return;

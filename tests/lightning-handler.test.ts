@@ -261,10 +261,18 @@ describe("deposit access", () => {
     });
   });
 
-  test("the deposit command in a group replies with the same instruction", async () => {
+  test("the deposit command in a group replies with the same instruction to the sender alone", async () => {
     await withHarness({}, async (h) => {
       await h.send("/deposit", groupChat);
-      expect(h.calls.at(-1)?.payload.text).toBe("Open a private chat with the bot to deposit.");
+      expect(h.calls.at(-1)).toEqual({
+        method: "sendMessage",
+        payload: {
+          chat_id: -5,
+          text: "Open a private chat with the bot to deposit.",
+          ephemeral_message_parameters: { receiver_user_id: 321 },
+          reply_to_message_id: 22,
+        },
+      });
     });
   });
 

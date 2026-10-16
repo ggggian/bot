@@ -67,6 +67,7 @@ import {
   FEE_SWEEP_INTERVAL_MS,
   DEFAULT_JOIN_NOTIFICATIONS_EXTERNAL,
   DEFAULT_JOIN_NOTIFICATIONS_PER_MINUTE,
+  OFFICIAL_TELEGRAM_API_ROOT,
 } from "./utils/constants";
 import { FeeBudgetManager } from "./utils/fee-budget";
 import {
@@ -135,6 +136,9 @@ import {
   requireTelegramId,
   getRequiredTelegramIdForContext,
   resolveTelegramIdOrRespond,
+  isGroupChat,
+  replyEphemeralToSender,
+  replyErrorToMessage,
 } from "./utils/context-helpers";
 import { recentUpdateGuard } from "./utils/recent-update";
 import { getUsdPrice } from "./utils/price-service";
@@ -199,9 +203,11 @@ export type { CreateGameViaCommandOptions } from "./handlers/game-commands";
 // GLOBAL INSTANCES
 // ================================
 
+const telegramApiRoot = process.env["TELEGRAM_API_ROOT"] || OFFICIAL_TELEGRAM_API_ROOT;
+
 // Module-level exports for use by utility modules
 export const bot = new Bot(process.env.TELEGRAM_TOKEN!, {
-  client: { apiRoot: process.env["TELEGRAM_API_ROOT"] || "https://api.telegram.org" },
+  client: { apiRoot: telegramApiRoot },
 });
 
 // Last-resort boundary protection: never expose exception, validator, HTTP, or
@@ -513,6 +519,7 @@ const wrapCallbackHandler = <TCtx extends Context>(
 
 const walletMenuModule = createWalletMenuModule({
   bot,
+  telegramApiRoot,
   wallet,
   getTokenManager: () => tokenManager,
   wrapCallbackHandler,
@@ -1298,13 +1305,6 @@ const prepareTokenTradeQuote = async ({
  */
 const isPrivateChat = (ctx: Context): boolean => {
   return ctx.chat?.type === "private";
-};
-
-/**
- * Check if the context is a group or supergroup chat
- */
-const isGroupChat = (ctx: Context): boolean => {
-  return ctx.chat?.type === "group" || ctx.chat?.type === "supergroup";
 };
 
 /**
@@ -3203,6 +3203,7 @@ const chatDefaultsModule = createChatDefaultsModule({
   getOracleMaxPlayers,
   isUserGroupAdmin,
   replyToMessage,
+  replyErrorToMessage,
   buyAlerts: buyAlertService,
   network: (chatId) => evmRuntime?.network(chatId),
 });
@@ -3265,7 +3266,7 @@ const validateAndProcessTransaction = async (
   if (totalBalance < amount) {
     const shortageLabel = balanceLabel ?? (isSol ? "SOL" : DEFAULT_TOKEN_TICKER);
     const shortageMessage = `❌ Not enough ${shortageLabel}. Deposit more with /deposit or lower the amount.`;
-    await ctx.reply(shortageMessage, {
+    await replyEphemeralToSender(ctx, shortageMessage, {
       reply_to_message_id: ctx.message?.message_id,
     });
     return;
@@ -3347,7 +3348,7 @@ const handleCommandError = async (ctx: Context, error: any, commandName: string)
 };
 
 const replyUsageError = async (ctx: Context, message: string): Promise<void> => {
-  return replyToMessage(ctx, message);
+  return replyErrorToMessage(ctx, message);
 };
 
 const formatDefaultTokenSetMessage = (tokenTicker: string, tokenMint: string): string => {
@@ -3709,7 +3710,7 @@ registerCaseInsensitiveCommand(
     await handleCoinflipCommand(ctx as Context & { message?: any }, createCoinflipDeps());
   } catch (error) {
     console.error("Error in coinflip command:", error);
-    await ctx.reply("❌ Error setting up coinflip game. Please try again.");
+    await replyEphemeralToSender(ctx, "❌ Error setting up coinflip game. Please try again.");
   }
 });
 
@@ -3783,14 +3784,20 @@ registerCaseInsensitiveCommand(
 
   const addressArg = args[1];
   if (!addressArg) {
-    return replyToMessage(ctx, "Invalid wallet address. Please provide a valid Solana address.");
+    return replyErrorToMessage(
+      ctx,
+      "Invalid wallet address. Please provide a valid Solana address.",
+    );
   }
 
   let toAddress: PublicKey;
   try {
     toAddress = new PublicKey(addressArg);
   } catch {
-    return replyToMessage(ctx, "Invalid wallet address. Please provide a valid Solana address.");
+    return replyErrorToMessage(
+      ctx,
+      "Invalid wallet address. Please provide a valid Solana address.",
+    );
   }
 
   const amountArgRaw = args[2]?.trim();
@@ -3800,7 +3807,7 @@ registerCaseInsensitiveCommand(
   if (isAllRequest) {
     const wantsSol = !tokenArgRaw || tokenArgRaw.toUpperCase() === "SOL";
     if (!wantsSol) {
-      return replyToMessage(
+      return replyErrorToMessage(
         ctx,
         "Use a numeric amount when withdrawing SPL tokens. `all` is only supported for SOL.",
       );
@@ -3810,7 +3817,7 @@ registerCaseInsensitiveCommand(
       const nativeLamports = await wallet.getBalance(telegramId);
 
       if (nativeLamports <= 0) {
-        return replyToMessage(ctx, "Your wallet has no SOL available to withdraw.");
+        return replyErrorToMessage(ctx, "Your wallet has no SOL available to withdraw.");
       }
 
       await validateAndProcessTransaction(
@@ -3839,7 +3846,7 @@ registerCaseInsensitiveCommand(
   // Allow SOL withdrawals by parsing in a non-game context
   const parsed = await tokenManager.parseAmount(args, 2, ctx.chat?.id, "tip");
   if (!parsed.success) {
-    return replyToMessage(
+    return replyErrorToMessage(
       ctx,
       formatParseAmountError(parsed, "Please provide a valid amount greater than 0."),
     );
@@ -3903,12 +3910,12 @@ const handleTipCommand = async (ctx: Context): Promise<void> => {
     const fromUser = repliedMessage.from;
 
     if (fromUser.is_bot) {
-      return replyToMessage(ctx, "You cannot tip bots!");
+      return replyErrorToMessage(ctx, "You cannot tip bots!");
     }
 
     recipientTelegramId = BigInt(fromUser.id);
     if (recipientTelegramId === telegramId) {
-      return replyToMessage(ctx, "You can't tip yourself!");
+      return replyErrorToMessage(ctx, "You can't tip yourself!");
     }
 
     if (fromUser.username) {
@@ -3928,23 +3935,23 @@ const handleTipCommand = async (ctx: Context): Promise<void> => {
       case "lookup_failed":
         throw mentioned.error;
       case "verification_failed":
-        return replyToMessage(ctx, usernameVerificationFailedMessage(mentioned.username));
+        return replyErrorToMessage(ctx, usernameVerificationFailedMessage(mentioned.username));
       case "unknown":
-        return replyToMessage(
+        return replyErrorToMessage(
           ctx,
           `Unable to resolve <code>${escapeHtml(
             mentioned.username,
           )}</code>. Ask them to start a chat with the bot first.`,
         );
       case "unusable_id":
-        return replyToMessage(
+        return replyErrorToMessage(
           ctx,
           "Unable to resolve the specified user. Please try replying to their message instead.",
         );
       case "self":
-        return replyToMessage(ctx, "You can't tip yourself!");
+        return replyErrorToMessage(ctx, "You can't tip yourself!");
       case "bot":
-        return replyToMessage(ctx, "You cannot tip bots!");
+        return replyErrorToMessage(ctx, "You cannot tip bots!");
     }
 
     // Only a username Telegram gave for this account may be saved as theirs; a
@@ -3982,7 +3989,7 @@ const handleTipCommand = async (ctx: Context): Promise<void> => {
         ? "Amount is too large; please use a smaller value."
         : formatParseAmountError(parsed, "Please provide a valid amount greater than 0.");
 
-    return replyToMessage(ctx, errorMessage);
+    return replyErrorToMessage(ctx, errorMessage);
   }
 
   const parsedAmount = parsed.data;
@@ -4174,10 +4181,7 @@ const handlePublicCommand = async (ctx: Context) => {
   const args = ctx.message?.text?.trim().split(/\s+/).slice(1) ?? [];
   const filter = parsePublicGamesFilter(args);
   if (filter === null) {
-    await ctx.reply(PUBLIC_FILTER_USAGE, {
-      parse_mode: "HTML",
-      reply_to_message_id: ctx.message?.message_id,
-    });
+    await replyErrorToMessage(ctx, PUBLIC_FILTER_USAGE);
     return;
   }
 
@@ -6147,7 +6151,8 @@ const handleMediaForChatDefaults = async (
     inputSession.initiatorId.length > 0 &&
     inputSession.initiatorId !== userId
   ) {
-    await ctx.reply(
+    await replyEphemeralToSender(
+      ctx,
       "❌ <b>This prompt is no longer active for you.</b>\n\nOpen the defaults menu again to continue.",
       {
         parse_mode: "HTML",
@@ -6168,7 +6173,8 @@ const handleMediaForChatDefaults = async (
     // Each handler is registered for its own media type, so the media is present.
     if (mediaType === "document") {
       // Reject all documents - only accept direct photos, videos, and animations
-      await ctx.reply(
+      await replyEphemeralToSender(
+        ctx,
         "❌ <b>Please send media directly</b>\n\n" +
           "Only <b>photos</b>, <b>videos</b>, or <b>GIFs</b> sent directly are accepted.\n\n" +
           "Files sent as documents are not supported.",
@@ -6186,7 +6192,7 @@ const handleMediaForChatDefaults = async (
   } catch (error) {
     clearInputSession(sessionKey);
     console.error("Error handling media input for chat defaults:", error);
-    await ctx.reply("❌ <b>Error processing media</b>\n\nPlease try again.", {
+    await replyEphemeralToSender(ctx, "❌ <b>Error processing media</b>\n\nPlease try again.", {
       parse_mode: "HTML",
     });
   } finally {

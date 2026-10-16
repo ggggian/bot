@@ -78,6 +78,9 @@ export const GAME_MESSAGE_USERNAME_LOOKUP_CONCURRENCY = 8;
 // If a game has more than this many participants, avoid network lookups (use cached/DB display names only).
 export const GAME_MESSAGE_NETWORK_LOOKUP_MAX_PARTICIPANTS = 100;
 
+// Bot API server the bot talks to unless TELEGRAM_API_ROOT points elsewhere.
+export const OFFICIAL_TELEGRAM_API_ROOT = "https://api.telegram.org";
+
 // ================================
 // INTERVALS
 // ================================

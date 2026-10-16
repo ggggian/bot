@@ -52,6 +52,15 @@ export const isBotInitiationForbidden = (error: unknown): boolean => {
   return matchesAny(error, ["bot can't initiate conversation"]) || isChatInaccessible(error);
 };
 
+/** Telegram answered and refused the request, unlike a failed connection. */
+export const isRequestRefused = (error: unknown): boolean => {
+  const code = (error as any)?.error_code;
+  return code === 400 || code === 403;
+};
+
+/** Telegram refuses ephemeral messages that need admin rights the bot lacks. */
+export const isBotNotAdmin = (error: unknown): boolean => matchesAny(error, ["bot_not_admin"]);
+
 export const isMissingEditableContent = (error: unknown): boolean =>
   matchesAny(error, [
     "there is no text in the message to edit",

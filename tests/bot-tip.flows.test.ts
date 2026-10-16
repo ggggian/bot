@@ -6,6 +6,7 @@ import {
   callsTo,
   failApiMethod,
   clearApiOverride,
+  lastCall,
   lastText,
   overrideApiMethod,
   resetCalls,
@@ -24,7 +25,8 @@ const CHAT = -4_200;
 const SENDER = 71_001;
 const TARGET = 71_002;
 const LAMPORTS = 1_000_000_000;
-const USAGE = "Usage:";
+const USAGE =
+  "Usage: Reply to a user's message or use /tip @username &lt;amount&gt; [TOKEN|USD] (or use $ for USD, e.g. /tip @username $10 WBTC)";
 let updateId = 93_000_000;
 
 let parseResult: any;
@@ -151,6 +153,17 @@ const tip = (text: string, options: TipOptions = {}) => {
   } as any);
 };
 
+// In a group, a refused /tip reaches only its sender, as a reply to the command.
+const expectSenderOnly = (text: unknown) => {
+  expect(lastCall("sendMessage")?.payload).toEqual({
+    chat_id: CHAT,
+    text,
+    parse_mode: "HTML",
+    reply_to_message_id: updateId,
+    ephemeral_message_parameters: { receiver_user_id: SENDER },
+  });
+};
+
 const mentionEntity = (text: string, mention: string) => ({
   type: "mention",
   offset: text.indexOf(mention),
@@ -167,17 +180,17 @@ describe("/tip argument validation", () => {
 
   test("a bare /tip without a reply explains usage", async () => {
     await tip("/tip");
-    expect(lastText()).toContain(USAGE);
+    expectSenderOnly(USAGE);
   });
 
   test("replying to a bot is refused", async () => {
     await tip("/tip 1", { replyFrom: { id: 1, is_bot: true, first_name: "Bot" } });
-    expect(lastText()).toBe("You cannot tip bots!");
+    expectSenderOnly("You cannot tip bots!");
   });
 
   test("replying to your own message is refused", async () => {
     await tip("/tip 1", { replyFrom: { id: SENDER, is_bot: false, first_name: "Me" } });
-    expect(lastText()).toBe("You can't tip yourself!");
+    expectSenderOnly("You can't tip yourself!");
   });
 
   test("a mention with no amount explains usage", async () => {
@@ -186,13 +199,13 @@ describe("/tip argument validation", () => {
 
     await tip(text, { entities: [mentionEntity(text, "@bob")] });
 
-    expect(lastText()).toContain(USAGE);
+    expectSenderOnly(USAGE);
     expect(parseCalls).toHaveLength(0);
   });
 
   test("args without any mention explain usage", async () => {
     await tip("/tip 5 SOL");
-    expect(lastText()).toContain(USAGE);
+    expectSenderOnly(USAGE);
   });
 
   test("unknown usernames ask the recipient to start the bot", async () => {
@@ -200,7 +213,7 @@ describe("/tip argument validation", () => {
 
     await tip(text, { entities: [mentionEntity(text, "@ghost<x>")] });
 
-    expect(lastText()).toBe(
+    expectSenderOnly(
       "Unable to resolve <code>@ghost&lt;x&gt;</code>. Ask them to start a chat with the bot first.",
     );
   });
@@ -218,7 +231,7 @@ describe("/tip argument validation", () => {
 
     await tip("/tip @tip_impersonated 2 SOL");
 
-    expect(lastText()).toBe(
+    expectSenderOnly(
       "Unable to resolve <code>@tip_impersonated</code>. Ask them to start a chat with the bot first.",
     );
     expect(transferSol).not.toHaveBeenCalled();
@@ -242,7 +255,7 @@ describe("/tip argument validation", () => {
 
     await tip(text, { entities: [mentionEntity(text, "@weird")] });
 
-    expect(lastText()).toBe(
+    expectSenderOnly(
       "Unable to resolve the specified user. Please try replying to their message instead.",
     );
   });
@@ -253,7 +266,7 @@ describe("/tip argument validation", () => {
 
     await tip(text, { entities: [mentionEntity(text, "@me")] });
 
-    expect(lastText()).toBe("You can't tip yourself!");
+    expectSenderOnly("You can't tip yourself!");
   });
 
   test("a mention that Telegram reports as a bot is refused", async () => {
@@ -266,7 +279,7 @@ describe("/tip argument validation", () => {
 
     await tip(text, { entities: [mentionEntity(text, "@helper_bot")] });
 
-    expect(lastText()).toBe("You cannot tip bots!");
+    expectSenderOnly("You cannot tip bots!");
   });
 
   test("a text mention of a bot is refused without asking Telegram", async () => {
@@ -283,18 +296,18 @@ describe("/tip argument validation", () => {
       ],
     });
 
-    expect(lastText()).toBe("You cannot tip bots!");
+    expectSenderOnly("You cannot tip bots!");
     expect(callsTo("getChatMember")).toHaveLength(0);
   });
 
   test("amount parse errors are shown, with a friendly message for overflow", async () => {
     parseResult = { success: false, error: "amount_too_large" };
     await tip("/tip 99999999999", { replyFrom: { id: TARGET, is_bot: false, first_name: "T" } });
-    expect(lastText()).toBe("Amount is too large; please use a smaller value.");
+    expectSenderOnly("Amount is too large; please use a smaller value.");
 
     parseResult = { success: false, error: "invalid_amount" };
     await tip("/tip lots", { replyFrom: { id: TARGET, is_bot: false, first_name: "T" } });
-    expect(lastText()).toContain("Please provide a valid amount greater than 0.");
+    expectSenderOnly("Please provide a valid amount greater than 0.");
   });
 });
 
@@ -533,7 +546,9 @@ describe("/tip recipients and amounts", () => {
 
     await tip(text, { entities: [mentionEntity(text, "@bob")] });
 
-    expect(lastText()).toContain("I couldn't verify");
+    expectSenderOnly(
+      "I couldn't verify <code>@bob</code>. Reply to their message or pick them from Telegram's mention list.",
+    );
     expect(transferSol).not.toHaveBeenCalled();
   });
 
@@ -581,7 +596,7 @@ describe("/tip to a mentioned username", () => {
 
     expect(primed).toEqual([]);
     expect(loosePrimed).toEqual([]);
-    expect(lastText()).toBe(
+    expectSenderOnly(
       "I couldn't verify <code>@bob</code>. Reply to their message or pick them from Telegram's mention list.",
     );
     expect(transferSol).not.toHaveBeenCalled();
@@ -592,7 +607,9 @@ describe("/tip to a mentioned username", () => {
     lookups["@bob"] = String(TARGET);
     failApiMethod("getChatMember", "Bad Request: user not found");
     await tip("/tip @bob 2 SOL");
-    expect(lastText()).toContain("I couldn't verify");
+    expectSenderOnly(
+      "I couldn't verify <code>@bob</code>. Reply to their message or pick them from Telegram's mention list.",
+    );
     expect(transferSol).not.toHaveBeenCalled();
     expect(transferToken).not.toHaveBeenCalled();
   });
