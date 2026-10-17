@@ -166,6 +166,54 @@ describe("showWalletUI identity and DM handling", () => {
     expect(getWalletPageData).not.toHaveBeenCalled();
   });
 
+  test("a cached page sent privately also shows its copy to the sender in the group", async () => {
+    const { ctx, calls } = makeCtx({ __originChatId: -50, __originMessageId: 31 });
+    const page = { solBalance: 1e9, tokenBalances: [], page: 0, pageCount: 1 };
+
+    await showWalletUI(
+      ctx,
+      deps({
+        getWalletPageData: mock(async () => page),
+        peekWalletPageData: () => ({ data: page, fetchedAt: NOW }),
+        showGroupSummary: true,
+      }),
+    );
+
+    const [dm] = calls.filter(([kind]) => kind === "reply");
+    expect(calls.filter(([kind]) => kind === "send")).toEqual([
+      [
+        "send",
+        -50,
+        `${dm![1]}\n\n<i>The full wallet menu is in our private chat.</i>`,
+        {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+          reply_parameters: { message_id: 31, allow_sending_without_reply: true },
+          ephemeral_message_parameters: { receiver_user_id: 1 },
+        },
+      ],
+    ]);
+  });
+
+  test("an anonymous admin gets no copy in the group, since Telegram refuses ephemeral messages to bots", async () => {
+    const { ctx, calls } = makeCtx({
+      from: { id: 1087968824, is_bot: true, first_name: "Group" },
+      __originChatId: -50,
+    });
+
+    await showWalletUI(ctx, deps({ showGroupSummary: true }));
+
+    expect(calls.map(([kind]) => kind)).toEqual(["reply"]);
+  });
+
+  test("a /balance typed in a group gets only the private copy when the group copy is off", async () => {
+    const { ctx, calls } = makeCtx({ __originChatId: -50, __originMessageId: 31 });
+
+    await showWalletUI(ctx, deps());
+
+    expect(calls.map(([kind]) => kind)).toEqual(["reply"]);
+  });
+
   test("other send failures propagate", async () => {
     const { ctx } = makeCtx();
     ctx.reply = async () => {

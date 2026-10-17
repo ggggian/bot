@@ -94,6 +94,8 @@ type ChatDefaultsModuleDeps = {
   getOracleMaxPlayers: () => number;
   isUserGroupAdmin: (ctx: Context, userId: number) => Promise<boolean>;
   replyToMessage: (ctx: Context, text: string) => Promise<void>;
+  /** Replies to the sender alone where Telegram allows it; for their own mistakes. */
+  replyErrorToMessage: (ctx: Context, text: string) => Promise<void>;
   buyAlerts?: {
     refresh: () => void;
   };
@@ -402,7 +404,7 @@ const handleTokenChange = async (
       response += "💡 Contact the bot administrator to add new tokens.";
     }
 
-    await deps.replyToMessage(ctx, response);
+    await deps.replyErrorToMessage(ctx, response);
     return;
   }
 
@@ -520,7 +522,7 @@ const handlePlayersUpdate = async (
   const parsed = Number.parseInt(input.trim(), 10);
   const clamped = clampChatPlayers(parsed, target, maxLimit);
   if (clamped === null || Number.isNaN(parsed)) {
-    await deps.replyToMessage(
+    await deps.replyErrorToMessage(
       ctx,
       `❌ Invalid number. Please enter a value between ${minValue}-${maxLimit}.`,
     );
@@ -566,7 +568,7 @@ const handleTimeoutUpdate = async (
 
   const parsed = Number.parseInt(input.trim(), 10);
   if (!Number.isFinite(parsed)) {
-    await deps.replyToMessage(ctx, "❌ Please enter a valid number of seconds.");
+    await deps.replyErrorToMessage(ctx, "❌ Please enter a valid number of seconds.");
     return;
   }
 
@@ -617,7 +619,10 @@ const handleVideoIdUpdate = async (
 
   const videoId = input.trim();
   if (!videoId || videoId.length < 5) {
-    await deps.replyToMessage(ctx, "❌ Invalid file ID. Please send a valid Telegram file ID.");
+    await deps.replyErrorToMessage(
+      ctx,
+      "❌ Invalid file ID. Please send a valid Telegram file ID.",
+    );
     return;
   }
 
@@ -699,7 +704,7 @@ export const createChatDefaultsModule = (deps: ChatDefaultsModuleDeps): ChatDefa
 
     const tokenInput = args[1];
     if (!tokenInput) {
-      await deps.replyToMessage(ctx, "Please provide a token ticker.");
+      await deps.replyErrorToMessage(ctx, "Please provide a token ticker.");
       return;
     }
 
@@ -1210,7 +1215,7 @@ export const createChatDefaultsModule = (deps: ChatDefaultsModuleDeps): ChatDefa
       initiatorId.length > 0 &&
       initiatorId !== currentUserId
     ) {
-      await deps.replyToMessage(
+      await deps.replyErrorToMessage(
         ctx,
         "❌ <b>This prompt is no longer active for you.</b>\n\nOpen the defaults menu again to continue.",
       );
@@ -1220,7 +1225,7 @@ export const createChatDefaultsModule = (deps: ChatDefaultsModuleDeps): ChatDefa
     const telegramId = getTelegramId(ctx);
     const admin = await deps.isUserGroupAdmin(ctx, Number(telegramId));
     if (!admin) {
-      await deps.replyToMessage(ctx, "🔒 Only group administrators can update chat defaults.");
+      await deps.replyErrorToMessage(ctx, "🔒 Only group administrators can update chat defaults.");
       return true;
     }
 
@@ -1230,13 +1235,13 @@ export const createChatDefaultsModule = (deps: ChatDefaultsModuleDeps): ChatDefa
     if (target === "buy_alerts_min_custom") {
       const chatId = session.chatId;
       if (typeof chatId !== "number") {
-        await deps.replyToMessage(ctx, "❌ Session expired. Please try again.");
+        await deps.replyErrorToMessage(ctx, "❌ Session expired. Please try again.");
         return true;
       }
 
       const parsed = parseMinSolInput(userMessage);
       if (!parsed.ok) {
-        await deps.replyToMessage(
+        await deps.replyErrorToMessage(
           ctx,
           `❌ Invalid amount. Enter a number between ${MIN_BUY_ALERT_SOL} and ${MAX_BUY_ALERT_SOL} SOL, or 0 / off.`,
         );
@@ -1261,13 +1266,13 @@ export const createChatDefaultsModule = (deps: ChatDefaultsModuleDeps): ChatDefa
     if (target === "join_rate_custom") {
       const chatId = session.chatId;
       if (typeof chatId !== "number") {
-        await deps.replyToMessage(ctx, "❌ Session expired. Please try again.");
+        await deps.replyErrorToMessage(ctx, "❌ Session expired. Please try again.");
         return true;
       }
 
       const rate = parseInt(userMessage.trim(), 10);
       if (isNaN(rate) || rate < 0 || rate > MAX_JOIN_NOTIFICATIONS_PER_MINUTE) {
-        await deps.replyToMessage(
+        await deps.replyErrorToMessage(
           ctx,
           `❌ Invalid rate. Please enter a number between 0 and ${MAX_JOIN_NOTIFICATIONS_PER_MINUTE}.`,
         );

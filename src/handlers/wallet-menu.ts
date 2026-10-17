@@ -5,6 +5,7 @@ import {
   getStartVideoId,
   USER_WALLET_RPC_MAX_CALLS,
   WALLET_RPC_CACHE_TTL_MS,
+  OFFICIAL_TELEGRAM_API_ROOT,
 } from "../utils/constants";
 import {
   buildWalletCaption,
@@ -95,6 +96,8 @@ type WalletSnapshotSeed = {
 
 type WalletMenuModuleOptions = {
   bot: Bot;
+  /** Bot API server the bot uses; the group copy of /balance needs the official one. */
+  telegramApiRoot?: string;
   wallet: WalletManager;
   getTokenManager: () => TokenManager | undefined;
   wrapCallbackHandler: WrapCallbackHandler;
@@ -143,7 +146,8 @@ type WalletMenuModule = {
 };
 
 export const createWalletMenuModule = (options: WalletMenuModuleOptions): WalletMenuModule => {
-  const { bot, wallet, getTokenManager, wrapCallbackHandler, rpcRateLimiter } = options;
+  const { bot, telegramApiRoot, wallet, getTokenManager, wrapCallbackHandler, rpcRateLimiter } =
+    options;
 
   const walletRpcLimiter = rpcRateLimiter.limiter;
   const walletRpcMax = Math.max(1, rpcRateLimiter.maxRequests ?? USER_WALLET_RPC_MAX_CALLS);
@@ -513,6 +517,7 @@ export const createWalletMenuModule = (options: WalletMenuModuleOptions): Wallet
       createWalletKeyboard,
       WINNER_VIDEO_ID: getStartVideoId(),
       holdMarks,
+      showGroupSummary: telegramApiRoot === OFFICIAL_TELEGRAM_API_ROOT,
     });
   };
 

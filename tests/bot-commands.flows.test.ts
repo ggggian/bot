@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { Bot } from "grammy";
 import { Keypair } from "#solana";
 import {
+  bot,
   botModule,
+  lastCall,
   lastText,
   messageCalls,
   messageText,
@@ -189,6 +191,88 @@ describe("/withdraw", () => {
   });
 });
 
+describe("refused commands in a group", () => {
+  const GROUP = -61_500;
+  const COMMAND = 61_501;
+  const inGroup = (text: string) =>
+    sendText(text, { userId: USER, chatId: GROUP, messageId: COMMAND });
+  const expectSenderOnly = (text: unknown) => {
+    expect(lastCall("sendMessage")?.payload).toEqual({
+      chat_id: GROUP,
+      text,
+      parse_mode: "HTML",
+      reply_to_message_id: COMMAND,
+      ephemeral_message_parameters: { receiver_user_id: USER },
+    });
+  };
+  const INVALID_ADDRESS = "Invalid wallet address. Please provide a valid Solana address.";
+
+  test("/withdraw usage reaches only the sender", async () => {
+    await inGroup("/withdraw");
+    expectSenderOnly(
+      "Usage: /withdraw &lt;address&gt; &lt;amount&gt; [TOKEN|USD] (or use $ for USD, e.g. /withdraw &lt;address&gt; $10 WBTC)",
+    );
+  });
+
+  test("/withdraw with an empty address reaches only the sender", async () => {
+    await inGroup("/withdraw  1 SOL");
+    expectSenderOnly(INVALID_ADDRESS);
+  });
+
+  test("/withdraw with an invalid address reaches only the sender", async () => {
+    await inGroup("/withdraw not-an-address 1");
+    expectSenderOnly(INVALID_ADDRESS);
+  });
+
+  test("/withdraw all of an SPL token reaches only the sender", async () => {
+    await inGroup(`/withdraw ${recipient} all BONK`);
+    expectSenderOnly(
+      "Use a numeric amount when withdrawing SPL tokens. `all` is only supported for SOL.",
+    );
+  });
+
+  test("/withdraw all without SOL reaches only the sender", async () => {
+    stub(wallet, "getBalance", async () => 0);
+    await inGroup(`/withdraw ${recipient} max`);
+    expectSenderOnly("Your wallet has no SOL available to withdraw.");
+  });
+
+  test("/withdraw with an unreadable amount reaches only the sender", async () => {
+    parseResult = { success: false, error: "invalid_amount" };
+    await inGroup(`/withdraw ${recipient} lots`);
+    expectSenderOnly("Please provide a valid amount greater than 0.");
+  });
+
+  test("/withdraw usage from an anonymous admin is answered as usual", async () => {
+    await bot.handleUpdate({
+      update_id: 61_502,
+      message: {
+        message_id: COMMAND,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: GROUP, type: "supergroup", title: "Test Group" },
+        from: { id: 1087968824, is_bot: true, first_name: "Group", username: "GroupAnonymousBot" },
+        sender_chat: { id: GROUP, type: "supergroup", title: "Test Group" },
+        text: "/withdraw",
+        entities: [{ type: "bot_command", offset: 0, length: 9 }],
+      },
+    } as any);
+
+    expect(lastCall("sendMessage")?.payload).toEqual({
+      chat_id: GROUP,
+      text: "Usage: /withdraw &lt;address&gt; &lt;amount&gt; [TOKEN|USD] (or use $ for USD, e.g. /withdraw &lt;address&gt; $10 WBTC)",
+      parse_mode: "HTML",
+      reply_to_message_id: COMMAND,
+    });
+  });
+
+  test("/public with an unknown filter reaches only the sender", async () => {
+    await inGroup("/public coinflip giveaway");
+    expectSenderOnly(
+      "Usage: <code>/public [coinflip|giveaway] [TICKER]</code>\nExample: <code>/public coinflip TIMBA</code>",
+    );
+  });
+});
+
 describe("/start buy-alert deep links", () => {
   test("opens the swap screen for the alerted token in private chats", async () => {
     stub(wallet, "getAllWalletTokenBalances", async () => []);
@@ -209,18 +293,23 @@ describe("/start buy-alert deep links", () => {
 });
 
 describe("/cf error handling", () => {
-  test("apologises when the coinflip handler throws", async () => {
+  test("apologises only to the sender when the coinflip handler throws", async () => {
     const game = await import("../src/handlers/game");
     const spy = spyOn(game, "handleCoinflipCommand").mockImplementation((async () => {
       throw new Error("boom");
     }) as any);
     try {
-      await sendText("/cf", { userId: USER, chatId: -USER });
+      await sendText("/cf", { userId: USER, chatId: -USER, messageId: 61_601 });
     } finally {
       spy.mockRestore();
     }
 
-    expect(lastText()).toBe("❌ Error setting up coinflip game. Please try again.");
+    expect(lastCall("sendMessage")?.payload).toEqual({
+      chat_id: -USER,
+      text: "❌ Error setting up coinflip game. Please try again.",
+      reply_to_message_id: 61_601,
+      ephemeral_message_parameters: { receiver_user_id: USER },
+    });
   });
 });
 

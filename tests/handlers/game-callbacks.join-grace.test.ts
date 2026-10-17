@@ -8,6 +8,7 @@ import {
 } from "../../src/handlers/game-callbacks";
 import { GAME_SETUP_COPY } from "../../src/handlers/game-setup";
 import { GameManager } from "../../src/utils/game";
+import { telegramRefusal } from "../helpers/telegram-errors";
 import { makeProgramStub, makeWalletStub } from "../helpers/game-manager";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -184,7 +185,7 @@ describe("join callback grace toast", () => {
     expect(replies).toEqual([]);
   });
 
-  test("slow failed joins explain the failure in a quiet reply", async () => {
+  test("slow failed joins explain the failure only to the player who tapped", async () => {
     const module = makeModule(async () => {
       await sleep(450);
       return { success: false, error: "simulation failed" };
@@ -193,6 +194,140 @@ describe("join callback grace toast", () => {
     await module.__test_handleGenericGameCallback(ctx as Context, async () => {});
     expect(answers).toEqual([JOIN_PENDING_TOAST]);
     expect(replies).toEqual([
+      [
+        "Failed to join game. Please try again.",
+        {
+          disable_notification: true,
+          reply_to_message_id: 42,
+          ephemeral_message_parameters: {
+            receiver_user_id: 555,
+            callback_query_id: ctx.callbackQuery.id,
+          },
+        },
+      ],
+    ]);
+  });
+
+  test("slow failed joins in a private chat keep the regular quiet reply", async () => {
+    const module = makeModule(async () => {
+      await sleep(450);
+      return { success: false, error: "simulation failed" };
+    });
+    const { ctx, answers, replies } = await makeCtx();
+    ctx.chat = { id: 555, type: "private" };
+    await module.__test_handleGenericGameCallback(ctx as Context, async () => {});
+    expect(answers).toEqual([JOIN_PENDING_TOAST]);
+    expect(replies).toEqual([
+      [
+        "Failed to join game. Please try again.",
+        { disable_notification: true, reply_to_message_id: 42 },
+      ],
+    ]);
+  });
+
+  test("slow join errors thrown by the handler also go only to the player who tapped", async () => {
+    const module = makeModule(async () => {
+      await sleep(450);
+      throw new Error("synthetic rpc outage");
+    });
+    const { ctx, answers, replies } = await makeCtx();
+    await module.__test_handleGenericGameCallback(ctx as Context, async () => {});
+    expect(answers).toEqual([JOIN_PENDING_TOAST]);
+    expect(replies).toEqual([
+      [
+        "❌ Something went wrong\nThat didn't go through. Try again in a moment, or ask an admin if it keeps happening.",
+        {
+          disable_notification: true,
+          reply_to_message_id: 42,
+          ephemeral_message_parameters: {
+            receiver_user_id: 555,
+            callback_query_id: ctx.callbackQuery.id,
+          },
+        },
+      ],
+    ]);
+  });
+
+  test("a failure after the tap expired reaches the player without the tap id", async () => {
+    const module = makeModule(async () => {
+      await sleep(450);
+      return { success: false, error: "simulation failed" };
+    });
+    const { ctx, answers } = await makeCtx();
+    const attempts: Array<[string, any]> = [];
+    ctx.reply = async (text: string, options: any) => {
+      attempts.push([text, options]);
+      if (attempts.length === 1) {
+        throw telegramRefusal(
+          "Bad Request: query is too old and response timeout expired or query ID is invalid",
+        );
+      }
+    };
+    await module.__test_handleGenericGameCallback(ctx as Context, async () => {});
+    expect(answers).toEqual([JOIN_PENDING_TOAST]);
+    expect(attempts).toEqual([
+      [
+        "Failed to join game. Please try again.",
+        {
+          disable_notification: true,
+          reply_to_message_id: 42,
+          ephemeral_message_parameters: {
+            receiver_user_id: 555,
+            callback_query_id: ctx.callbackQuery.id,
+          },
+        },
+      ],
+      [
+        "Failed to join game. Please try again.",
+        {
+          disable_notification: true,
+          reply_to_message_id: 42,
+          ephemeral_message_parameters: { receiver_user_id: 555 },
+        },
+      ],
+    ]);
+  });
+
+  test("a late failure the bot cannot show privately reaches the group as a regular reply", async () => {
+    const module = makeModule(async () => {
+      await sleep(450);
+      return { success: false, error: "simulation failed" };
+    });
+    const { ctx, answers } = await makeCtx();
+    const attempts: Array<[string, any]> = [];
+    ctx.reply = async (text: string, options: any) => {
+      attempts.push([text, options]);
+      if (options.ephemeral_message_parameters?.callback_query_id) {
+        throw telegramRefusal(
+          "Bad Request: query is too old and response timeout expired or query ID is invalid",
+        );
+      }
+      if (options.ephemeral_message_parameters) {
+        throw telegramRefusal("Bad Request: BOT_NOT_ADMIN");
+      }
+    };
+    await module.__test_handleGenericGameCallback(ctx as Context, async () => {});
+    expect(answers).toEqual([JOIN_PENDING_TOAST]);
+    expect(attempts).toEqual([
+      [
+        "Failed to join game. Please try again.",
+        {
+          disable_notification: true,
+          reply_to_message_id: 42,
+          ephemeral_message_parameters: {
+            receiver_user_id: 555,
+            callback_query_id: ctx.callbackQuery.id,
+          },
+        },
+      ],
+      [
+        "Failed to join game. Please try again.",
+        {
+          disable_notification: true,
+          reply_to_message_id: 42,
+          ephemeral_message_parameters: { receiver_user_id: 555 },
+        },
+      ],
       [
         "Failed to join game. Please try again.",
         { disable_notification: true, reply_to_message_id: 42 },

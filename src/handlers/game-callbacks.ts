@@ -119,8 +119,9 @@ const ALREADY_JOINED_TOAST = "You already joined this game.";
 
 /**
  * After the "Joining…" toast, a join result can no longer be shown as a toast.
- * Success is visible on the refreshed game card; anything else is posted as a
- * quiet reply so the player learns why they are not on the card.
+ * Success is visible on the refreshed game card; anything else goes to the
+ * player alone as an ephemeral reply, so they learn why they are not on the
+ * card without the error landing in the group, unless Telegram refuses it.
  */
 const replyWithLateJoinFailure =
   (ctx: Context) =>

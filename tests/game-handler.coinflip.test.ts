@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { handleCoinflipCommand } from "../src/handlers/game";
 import { createTelegramContext } from "./helpers/fixtures";
 
+// The test sender (id 1) is the only one who sees these refusals in the group.
+const ONLY_SENDER = { ephemeral_message_parameters: { receiver_user_id: 1 } };
+
 describe("game handler: coinflip command", () => {
   test("allows game creation in private chat (forced public)", async () => {
     const ctx: any = createTelegramContext("/cf 10", "private");
@@ -142,7 +145,9 @@ describe("game handler: coinflip command", () => {
     expect(calls.resolved).toEqual([["NOPE", 100]]);
     expect(calls.interactive).toBe(0);
     expect(calls.command).toBe(0);
-    expect(ctx.__calls).toEqual([["reply", "Token unavailable. Check its symbol or address."]]);
+    expect(ctx.__calls).toEqual([
+      ["reply", "Token unavailable. Check its symbol or address.", ONLY_SENDER],
+    ]);
   });
 
   test("does nothing but explain when the sender cannot be identified", async () => {
@@ -197,7 +202,7 @@ describe("game handler: coinflip command", () => {
       [
         "reply",
         "To challenge someone, reply to their message with <code>/cf &lt;amount&gt; [TOKEN]</code>.",
-        { parse_mode: "HTML" },
+        { parse_mode: "HTML", ...ONLY_SENDER },
       ],
     ]);
   });
@@ -229,7 +234,11 @@ describe("game handler: coinflip command", () => {
 
       expect(opened).toEqual([]);
       expect(ctx.__calls).toEqual([
-        ["reply", "To challenge someone, reply to their message in this chat and topic."],
+        [
+          "reply",
+          "To challenge someone, reply to their message in this chat and topic.",
+          ONLY_SENDER,
+        ],
       ]);
     },
   );
@@ -301,7 +310,11 @@ describe("game handler: coinflip naming who to challenge", () => {
       expect(lookups).toEqual([]);
       expect(created).toEqual([]);
       expect(ctx.__calls).toEqual([
-        ["reply", "To challenge someone, reply to their message or name them without replying."],
+        [
+          "reply",
+          "To challenge someone, reply to their message or name them without replying.",
+          ONLY_SENDER,
+        ],
       ]);
     },
   );
@@ -345,7 +358,7 @@ describe("game handler: coinflip naming who to challenge", () => {
 
       expect(lookups).toEqual([]);
       expect(created).toEqual([]);
-      expect(ctx.__calls).toEqual([["reply", answer]]);
+      expect(ctx.__calls).toEqual([["reply", answer, ONLY_SENDER]]);
     }
   });
 
@@ -397,7 +410,7 @@ describe("game handler: coinflip naming who to challenge", () => {
       [
         "reply",
         "I don't know who <code>@ghost</code> is. Reply to one of their messages to challenge them.",
-        { parse_mode: "HTML" },
+        { parse_mode: "HTML", ...ONLY_SENDER },
       ],
     ]);
   });
@@ -410,7 +423,7 @@ describe("game handler: coinflip naming who to challenge", () => {
 
     expect(created).toEqual([]);
     expect(ctx.__calls).toEqual([
-      ["reply", "You can't challenge yourself.", { parse_mode: "HTML" }],
+      ["reply", "You can't challenge yourself.", { parse_mode: "HTML", ...ONLY_SENDER }],
     ]);
   });
 
@@ -437,7 +450,7 @@ describe("game handler: coinflip naming who to challenge", () => {
       [
         "reply",
         "To challenge someone by name, use <code>/cf &lt;amount&gt; [TOKEN] @username</code>.",
-        { parse_mode: "HTML" },
+        { parse_mode: "HTML", ...ONLY_SENDER },
       ],
     ]);
   });

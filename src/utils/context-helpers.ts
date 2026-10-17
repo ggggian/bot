@@ -1,7 +1,9 @@
 import type { Context } from "grammy";
+import type { EphemeralMessageParameters } from "grammy/types";
 import type { CallbackError, ErrorHandlingOptions } from "../types";
 import { formatUserFriendlyError, truncateMessage } from "./errors";
 import { isMissingAccountError } from "./account-errors";
+import { getErrorDescription, isBotNotAdmin, isRequestRefused } from "./telegram-errors";
 import {
   getCallbackQueue,
   getRateLimiter,
@@ -298,15 +300,111 @@ export const answerCallbackWithGrace = async <T>(
 };
 
 /**
- * Posts `text` as a quiet reply to the message that owns the callback button.
- * Intended as an `onLateAnswer` fallback for results that no longer fit in a toast.
+ * Check if the context is a group or supergroup chat
+ */
+export const isGroupChat = (ctx: Context): boolean => {
+  return ctx.chat?.type === "group" || ctx.chat?.type === "supergroup";
+};
+
+/**
+ * Replies to the message that owns the callback button with an ephemeral
+ * message, which only the user who tapped sees. Intended as an `onLateAnswer`
+ * fallback for results that no longer fit in a toast. Without a user who can
+ * receive it nothing is sent. A private chat has no one else to hide it from,
+ * so there it is a regular reply.
+ *
+ * Telegram accepts the tap's id for 15 seconds. After that only a chat admin
+ * can send ephemeral messages, and only without the id, so a refused tap is
+ * retried without it, and then as a regular reply in the chat.
  */
 export const replyToCallbackMessage = async (ctx: any, text: string): Promise<void> => {
   if (typeof ctx?.reply !== "function") return;
   const messageId = ctx?.callbackQuery?.message?.message_id;
-  await ctx.reply(text, {
-    disable_notification: true,
-    ...(typeof messageId === "number" ? { reply_to_message_id: messageId } : {}),
+  const send = (extra: object) =>
+    ctx.reply(text, {
+      disable_notification: true,
+      ...(typeof messageId === "number" ? { reply_to_message_id: messageId } : {}),
+      ...extra,
+    });
+  if (!isGroupChat(ctx)) {
+    await send({});
+    return;
+  }
+  const userId = getEphemeralReceiver(ctx);
+  if (userId === undefined) return;
+  const callbackQueryId = ctx?.callbackQuery?.id;
+  if (typeof callbackQueryId === "string") {
+    try {
+      await send({
+        ephemeral_message_parameters: {
+          receiver_user_id: userId,
+          callback_query_id: callbackQueryId,
+        },
+      });
+      return;
+    } catch (error) {
+      if (!isRequestRefused(error)) throw error;
+    }
+  }
+  await sendEphemeralOrPublic(userId, send);
+};
+
+type EphemeralExtra = { ephemeral_message_parameters?: EphemeralMessageParameters };
+
+/**
+ * The user who can be sent a message only they see. Telegram refuses ephemeral
+ * messages to bots, which is who anonymous admins and channels write as.
+ */
+export const getEphemeralReceiver = (ctx: Context): number | undefined => {
+  const from = ctx.from;
+  return from && !from.is_bot ? from.id : undefined;
+};
+
+/**
+ * Sends a message only the given user sees. Outside a callback, Telegram lets
+ * only chat admins send ephemeral messages; when Telegram refuses it, for that
+ * or any other reason, the message is sent as a regular one, so the user still
+ * gets it. A failed connection is passed on instead, since the message may have
+ * arrived.
+ */
+export const sendEphemeralOrPublic = async (
+  receiverUserId: number,
+  send: (extra: EphemeralExtra) => Promise<unknown>,
+): Promise<void> => {
+  try {
+    await send({ ephemeral_message_parameters: { receiver_user_id: receiverUserId } });
+  } catch (error) {
+    if (!isRequestRefused(error)) throw error;
+    if (!isBotNotAdmin(error)) {
+      console.warn("Telegram refused an ephemeral message:", getErrorDescription(error));
+    }
+    await send({});
+  }
+};
+
+/**
+ * Replies with a message that concerns only the sender, such as an error in
+ * their command. In groups it goes as an ephemeral message when the bot can
+ * send one; elsewhere it is a regular reply.
+ */
+export const replyEphemeralToSender = async (
+  ctx: Context,
+  text: string,
+  other: Record<string, unknown> = {},
+): Promise<void> => {
+  const userId = getEphemeralReceiver(ctx);
+  if (!isGroupChat(ctx) || userId === undefined) {
+    await ctx.reply(text, other);
+    return;
+  }
+  await sendEphemeralOrPublic(userId, (extra) => ctx.reply(text, { ...other, ...extra }));
+};
+
+/** Replies to the sender's command with an error that concerns only them. */
+export const replyErrorToMessage = async (ctx: Context, text: string): Promise<void> => {
+  await replyEphemeralToSender(ctx, text, {
+    parse_mode: "HTML",
+    reply_to_message_id: ctx.message?.message_id,
   });
 };
 

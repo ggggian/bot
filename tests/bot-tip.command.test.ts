@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { telegramRefusal } from "./helpers/telegram-errors";
 
 const originalEnv = {
   NODE_ENV: process.env.NODE_ENV,
@@ -545,5 +546,101 @@ test("handleTipCommand notifies the recipient after showing confirmed success", 
     botModule.wallet.getPublicKey = original.getPublicKey;
     botModule.wallet.transferSol = original.transferSol;
     (botModule.bot.api as any).sendMessage = original.sendMessage;
+  }
+});
+
+const makeGroupTipCtx = (text: string, refusals: string[] = []) => {
+  const replies: Array<[string, any]> = [];
+  const ctx: any = {
+    chat: { id: -100731, type: "supergroup" },
+    from: { id: 6181, is_bot: false },
+    message: {
+      message_id: 512,
+      text,
+      reply_to_message: { message_id: 511, from: { id: 6181, is_bot: false, first_name: "Me" } },
+    },
+    reply: async (replyText: string, options: any) => {
+      replies.push([replyText, options]);
+      const refusal = refusals.shift();
+      if (refusal) throw telegramRefusal(refusal);
+      return { message_id: 0 };
+    },
+    api: {},
+  };
+  return { ctx, replies };
+};
+
+test("a tip to yourself in a group is shown only to the sender", async () => {
+  botModule.__test_setGameManager({ primeUsernameCache: () => {} } as any);
+  const { ctx, replies } = makeGroupTipCtx("/tip 5");
+
+  await botModule.__test_handleTipCommand(ctx);
+
+  expect(replies).toEqual([
+    [
+      "You can't tip yourself!",
+      {
+        parse_mode: "HTML",
+        reply_to_message_id: 512,
+        ephemeral_message_parameters: { receiver_user_id: 6181 },
+      },
+    ],
+  ]);
+});
+
+test("a tip to yourself is answered in the group when the bot is not an admin", async () => {
+  botModule.__test_setGameManager({ primeUsernameCache: () => {} } as any);
+  const { ctx, replies } = makeGroupTipCtx("/tip 5", ["Bad Request: BOT_NOT_ADMIN"]);
+
+  await botModule.__test_handleTipCommand(ctx);
+
+  expect(replies).toEqual([
+    [
+      "You can't tip yourself!",
+      {
+        parse_mode: "HTML",
+        reply_to_message_id: 512,
+        ephemeral_message_parameters: { receiver_user_id: 6181 },
+      },
+    ],
+    ["You can't tip yourself!", { parse_mode: "HTML", reply_to_message_id: 512 }],
+  ]);
+});
+
+test("a tip without enough balance is shown only to the sender", async () => {
+  const tokenManager = botModule.__test_getTokenManager();
+  tokenManager.parseAmount = async () => ({
+    success: true,
+    data: {
+      amount: 10,
+      isSol: false,
+      formattedAmount: "10 GLORP",
+      tokenMint: "GLORP_MINT",
+      tokenTicker: "GLORP",
+      decimals: 0,
+      tokenWasSpecified: true,
+      requestedNativeSol: false,
+    },
+  });
+  const originalTokenBalanceCall = botModule.wallet.getTokenBalance;
+  const originalSolBalanceCall = botModule.wallet.getBalance;
+  botModule.wallet.getTokenBalance = async () => 0;
+  botModule.wallet.getBalance = async () => 0;
+  try {
+    botModule.__test_setGameManager({ primeUsernameCache: () => {} } as any);
+    const { ctx, replies } = makeGroupTipCtx("/tip 10 GLORP");
+    ctx.message.reply_to_message.from = { id: 7290, is_bot: false, first_name: "Target" };
+
+    await botModule.__test_handleTipCommand(ctx);
+
+    expect(replies).toEqual([
+      [
+        "❌ Not enough GLORP. Deposit more with /deposit or lower the amount.",
+        { reply_to_message_id: 512, ephemeral_message_parameters: { receiver_user_id: 6181 } },
+      ],
+    ]);
+  } finally {
+    botModule.wallet.getTokenBalance = originalTokenBalanceCall;
+    botModule.wallet.getBalance = originalSolBalanceCall;
   }
 });

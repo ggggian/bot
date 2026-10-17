@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import { formatUserFriendlyError } from "../errors";
+import { replyErrorToMessage } from "../context-helpers";
 import type { WalletManager } from "../wallet";
 
 /**
@@ -22,7 +23,8 @@ export async function handleTransactionError(
 }
 
 /**
- * Handles command errors by logging and replying with user-friendly message.
+ * Handles command errors by logging and replying with user-friendly message,
+ * shown only to the sender where Telegram allows it.
  * Skips if error was already notified.
  */
 export async function handleCommandError(
@@ -36,8 +38,5 @@ export async function handleCommandError(
     return;
   }
   const userFriendlyError = await formatUserFriendlyError(error, wallet);
-  await ctx.reply(userFriendlyError, {
-    parse_mode: "HTML",
-    reply_to_message_id: ctx.message?.message_id,
-  });
+  await replyErrorToMessage(ctx, userFriendlyError);
 }

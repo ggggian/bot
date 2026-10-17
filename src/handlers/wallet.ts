@@ -14,10 +14,14 @@ import {
   getRequiredTelegramIdForContext,
   safeAnswerCallbackQuery,
   answerCallbackWithGrace,
+  getEphemeralReceiver,
+  sendEphemeralOrPublic,
 } from "../utils/context-helpers";
 import { RateLimitExceededError } from "../utils/rate-limiter";
 import {
+  getErrorDescription,
   isBotInitiationForbidden,
+  isBotNotAdmin,
   isMessageNotModified,
   isMissingEditableContent,
   isRateLimited,
@@ -39,6 +43,8 @@ type WalletPageView = {
 };
 
 const WALLET_PAGE_SIZE = 8;
+/** Closes the group copy of /balance, which has no buttons. */
+const WALLET_SUMMARY_FOOTER = "<i>The full wallet menu is in our private chat.</i>";
 /** Cached balances younger than this are shown without a background refresh. */
 export const WALLET_BACKGROUND_REFRESH_MIN_AGE_MS = 5_000;
 /** A refresh re-renders unchanged balances once the shown age reaches this. */
@@ -181,6 +187,8 @@ export type ShowWalletUIDeps = {
   createWalletKeyboard: (pagination?: WalletPagination) => InlineKeyboard;
   WINNER_VIDEO_ID?: string | null;
   holdMarks?: HoldMarkStore;
+  /** Whether a /balance typed in a group also shows its copy there. */
+  showGroupSummary?: boolean;
 };
 
 export async function showWalletUI(ctx: any, deps: ShowWalletUIDeps) {
@@ -193,6 +201,7 @@ export async function showWalletUI(ctx: any, deps: ShowWalletUIDeps) {
     createWalletKeyboard,
     WINNER_VIDEO_ID,
     holdMarks,
+    showGroupSummary,
   } = deps;
 
   const telegramId = await getRequiredTelegramIdForContext(ctx, "wallet display", {
@@ -237,6 +246,20 @@ export async function showWalletUI(ctx: any, deps: ShowWalletUIDeps) {
     return undefined;
   };
 
+  // Messages to the group where /balance was typed, as replies to it. Quoting it
+  // must not stop the message if it was deleted meanwhile.
+  const sendToOriginChat = (chatId: number, text: string, extra: object) => {
+    const originMessageId = (ctx as any).__originMessageId;
+    return ctx.api.sendMessage(chatId, text, {
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+      ...(typeof originMessageId === "number"
+        ? { reply_parameters: { message_id: originMessageId, allow_sending_without_reply: true } }
+        : {}),
+      ...extra,
+    });
+  };
+
   const notifyDmRequired = async () => {
     const originChatId = resolveOriginChatId();
     if (originChatId === undefined) {
@@ -256,11 +279,10 @@ export async function showWalletUI(ctx: any, deps: ShowWalletUIDeps) {
       startInstruction,
     ];
 
+    const send = (extra: object) => sendToOriginChat(originChatId, lines.join("\n"), extra);
+    const userId = getEphemeralReceiver(ctx);
     try {
-      await ctx.api.sendMessage(originChatId, lines.join("\n"), {
-        parse_mode: "HTML",
-        link_preview_options: { is_disabled: true },
-      });
+      await (userId === undefined ? send({}) : sendEphemeralOrPublic(userId, send));
     } catch (notifyError) {
       console.warn("Failed to notify user about DM requirement:", notifyError);
     }
@@ -303,6 +325,27 @@ export async function showWalletUI(ctx: any, deps: ShowWalletUIDeps) {
         return null;
       }
       throw error;
+    }
+  };
+
+  // A /balance typed in a group also shows the balances there, to the sender
+  // alone. Only an admin bot can send that, so elsewhere the DM is the only copy.
+  // A Bot API server that ignored the ephemeral parameter would post the
+  // balances to the whole group, so the copy goes only through the official one.
+  const showSummaryInOriginChat = async (caption: string) => {
+    const originChatId = (ctx as any).__originChatId;
+    const userId = getEphemeralReceiver(ctx);
+    if (!showGroupSummary || typeof originChatId !== "number" || userId === undefined) {
+      return;
+    }
+    try {
+      await sendToOriginChat(originChatId, `${caption}\n\n${WALLET_SUMMARY_FOOTER}`, {
+        ephemeral_message_parameters: { receiver_user_id: userId },
+      });
+    } catch (error) {
+      if (!isBotNotAdmin(error)) {
+        console.warn("Failed to show the wallet summary in the group:", getErrorDescription(error));
+      }
     }
   };
 
@@ -356,6 +399,7 @@ export async function showWalletUI(ctx: any, deps: ShowWalletUIDeps) {
       if (!sent) {
         return;
       }
+      await showSummaryInOriginChat(cachedCaption);
 
       if (now() - cached.fetchedAt >= WALLET_BACKGROUND_REFRESH_MIN_AGE_MS) {
         const target = resolveWalletMessageTarget(ctx, sent);
@@ -390,7 +434,9 @@ export async function showWalletUI(ctx: any, deps: ShowWalletUIDeps) {
     const pageData = await fetchWalletPage();
     const caption = await renderWalletCaption(pageData, pageData.fetchedAt ?? now());
 
-    await sendWalletContent(caption);
+    if (await sendWalletContent(caption)) {
+      await showSummaryInOriginChat(caption);
+    }
   } catch (error) {
     if (error instanceof RateLimitExceededError) {
       const waitSeconds = Math.max(1, Math.ceil(error.retryAfterMs / 1000));
@@ -550,6 +596,7 @@ export async function onBalance(ctx: any, deps: BalanceDeps) {
       message: undefined,
       callbackQuery: undefined,
       __originChatId: ctx.chat?.id,
+      __originMessageId: ctx.message?.message_id,
       reply: (text: string, options: any = {}) =>
         ctx.api.sendMessage(dmTarget, text, {
           reply_to_message_id: undefined,

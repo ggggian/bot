@@ -79,6 +79,21 @@ describe("handleCommandError", () => {
     expect(options).toEqual({ parse_mode: "HTML", reply_to_message_id: 555 });
   });
 
+  test("in a group only the sender sees the friendly error", async () => {
+    const { ctx, reply } = makeCtx(556);
+    ctx.chat = { id: -100, type: "supergroup" };
+    ctx.from = { id: 4410 };
+
+    await handleCommandError(ctx, new Error(NO_ROUTE), "swap", undefined as any);
+
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect((reply.mock.calls[0] as any[])[1]).toEqual({
+      parse_mode: "HTML",
+      reply_to_message_id: 556,
+      ephemeral_message_parameters: { receiver_user_id: 4410 },
+    });
+  });
+
   test("replies without a reply target when the update has no message", async () => {
     const { ctx, reply } = makeCtx();
 

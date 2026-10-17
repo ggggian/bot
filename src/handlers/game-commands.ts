@@ -14,7 +14,7 @@ import type { GameManager } from "../utils/game";
 import type { ChatGameSettings, ParseAmountResult } from "../types";
 import type { CoinflipDeps, GameTokenOverride } from "./game";
 import type { GameSetupCopy } from "./game-setup";
-import { containsBalanceInfo } from "../utils/context-helpers";
+import { containsBalanceInfo, replyEphemeralToSender } from "../utils/context-helpers";
 import { CHALLENGE_PLAYERS, resolveChallengeTarget } from "../utils/game-challenge";
 import type { GameChallenge } from "../utils/game-database";
 import type { UsernameDirectory } from "../utils/user-mention";
@@ -196,7 +196,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
         return;
       const parsed = await createDeps.parseAmount(args, 1, ctx.chat?.id);
       if (!parsed.success) {
-        await ctx.reply(formatParseAmountError(parsed, options.usageMessage), {
+        await replyEphemeralToSender(ctx, formatParseAmountError(parsed, options.usageMessage), {
           parse_mode: "HTML",
         });
         return;
@@ -223,7 +223,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
       );
 
       if (!inferred.ok) {
-        await ctx.reply(`❌ ${options.inferErrorLabel} ${inferred.error}`);
+        await replyEphemeralToSender(ctx, `❌ ${options.inferErrorLabel} ${inferred.error}`);
         return;
       }
 
@@ -243,7 +243,8 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
           minAmountRaw,
           tokenMetadata.decimals,
         );
-        await ctx.reply(
+        await replyEphemeralToSender(
+          ctx,
           `❌ Amount below current minimum of ${formattedMinimum} ${parsedAmount.tokenTicker}.`,
         );
         return;
@@ -267,7 +268,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
 
       if (!needsNativeSolCheck && userBalance < parsedAmount.amount) {
         const shortageMessage = `❌ Not enough ${parsedAmount.tokenTicker}. Add more ${parsedAmount.tokenTicker} or try a smaller amount.`;
-        await ctx.reply(shortageMessage, { parse_mode: "HTML" });
+        await replyEphemeralToSender(ctx, shortageMessage, { parse_mode: "HTML" });
         return;
       }
 
@@ -277,7 +278,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
           const wrappedLabel =
             parsedAmount.tokenMint === WSOL_MINT ? "wrapped SOL" : parsedAmount.tokenTicker;
           const shortageMessage = `❌ Not enough SOL or ${wrappedLabel}. Add more SOL or ${wrappedLabel} and try again.`;
-          await ctx.reply(shortageMessage, { parse_mode: "HTML" });
+          await replyEphemeralToSender(ctx, shortageMessage, { parse_mode: "HTML" });
           return;
         }
       }
@@ -372,7 +373,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
           : isCreationRateLimit
             ? "❌ Too many games are being created. Please try again shortly."
             : "❌ Failed to create game. Please try again.";
-        await ctx.reply(displayText, { parse_mode: "HTML" });
+        await replyEphemeralToSender(ctx, displayText, { parse_mode: "HTML" });
         return;
       }
 
@@ -416,7 +417,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
       }
     } catch (error) {
       console.error(`Error in command-based ${options.gameType}:`, error);
-      await ctx.reply(options.errorMessage);
+      await replyEphemeralToSender(ctx, options.errorMessage);
     } finally {
       activeCreationCommands.delete(creatorKey);
       await deleteCreationMessage();
@@ -458,7 +459,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
           ? await deps.resolveCommandTokenOverride(input.token, ctx.chat?.id)
           : undefined;
         if (input.token && !override) {
-          await ctx.reply("Token unavailable. Check its symbol or address.");
+          await replyEphemeralToSender(ctx, "Token unavailable. Check its symbol or address.");
           return;
         }
         await deps.startInteractiveGameSetup(
@@ -473,7 +474,7 @@ export const createGameCommandsModule = (deps: GameCommandsModuleDeps) => {
       await createGameViaCommand(ctx, args, telegramId, GIVEAWAY_COMMAND_OPTIONS);
     } catch (error) {
       console.error("Error in giveaway command:", error);
-      await ctx.reply("❌ Error setting up giveaway game. Please try again.");
+      await replyEphemeralToSender(ctx, "❌ Error setting up giveaway game. Please try again.");
     }
   };
 
