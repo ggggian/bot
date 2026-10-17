@@ -268,7 +268,9 @@ describe("typed replies to chat default prompts", () => {
       "an invalid player count",
       { setting: "coinflip" },
       "many",
-      "❌ Invalid number. Please enter a value between 2-100.",
+      // Startup reads the limit from the oracle account, so it follows the module state.
+      () =>
+        `❌ Invalid number. Please enter a value between 2-${botModule.__test_getOracleMaxPlayers()}.`,
     ],
     [
       "an invalid timeout",
@@ -313,7 +315,7 @@ describe("typed replies to chat default prompts", () => {
 
       await sendReply(input);
 
-      expectRefusalOnlyToSender(text);
+      expectRefusalOnlyToSender(typeof text === "function" ? text() : text);
     },
   );
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createWalletMenuModule } from "../src/handlers/wallet-menu";
 import { createMemoryHoldMarkStore } from "../src/services/hold-marks";
 
@@ -64,6 +64,20 @@ const groupBalanceContext = () => {
 };
 
 describe("wallet menu group copy of /balance", () => {
+  // Other test files leave SOLANA_NETWORK on a cluster Solscan links to; on a
+  // local validator the caption has no explorer link.
+  const originalNetwork = process.env.SOLANA_NETWORK;
+  beforeEach(() => {
+    process.env.SOLANA_NETWORK = "http://localhost:8899";
+  });
+  afterEach(() => {
+    if (originalNetwork === undefined) {
+      Reflect.deleteProperty(process.env, "SOLANA_NETWORK");
+    } else {
+      process.env.SOLANA_NETWORK = originalNetwork;
+    }
+  });
+
   test("through the official Bot API, a /balance typed in a group also shows its copy there", async () => {
     const { ctx, calls } = groupBalanceContext();
 
