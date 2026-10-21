@@ -107,12 +107,37 @@ describe("Bot Main Entry Point Tests", () => {
 
     test("lists only primary command names in a stable order", () => {
       const names = botModule.__test_getRegisteredBotCommands().map(({ command }) => command);
-      for (const alias of ["balance", "cf", "ga", "rain", "wh", "lb", "gb", "default", "config"]) {
+      for (const alias of [
+        "start",
+        "balance",
+        "cf",
+        "ga",
+        "rain",
+        "wh",
+        "lb",
+        "gb",
+        "default",
+        "config",
+      ]) {
         expect(names).not.toContain(alias);
       }
-      expect(names[0]).toBe("start");
+      expect(names[0]).toBe("balance_timba");
       expect(names.at(-1)).toBe("help");
       expect(names.indexOf("deposit")).toBeLessThan(names.indexOf("coinflip"));
+    });
+
+    test("every menu lists the wallet once, first, as /balance_timba", () => {
+      const walletEntry = { command: "balance_timba", description: "Open your wallet" };
+      for (const scope of ["all", "private", "group"] as const) {
+        const commands = botModule.__test_getRegisteredBotCommands(scope);
+        const names = commands.map(({ command }) => command);
+        expect(names).not.toContain("start");
+        expect(names).not.toContain("balance");
+        expect(commands[0]).toEqual(walletEntry);
+        expect(commands.filter((entry) => entry.description === walletEntry.description)).toEqual([
+          walletEntry,
+        ]);
+      }
     });
 
     test("scopes chat-type specific commands", () => {

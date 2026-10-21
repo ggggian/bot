@@ -343,7 +343,7 @@ export function registerEvmBot(
   });
   command("evm", async (ctx) => {
     if (ctx.chat?.type !== "private") {
-      await ctx.reply("Open a private chat with me and use /balance to view your wallet.");
+      await ctx.reply("Open a private chat with me and use /balance_timba to view your wallet.");
       return;
     }
     try {
@@ -495,7 +495,7 @@ export function registerEvmBot(
         });
         if (balance < amount) {
           await ctx.reply(
-            `Insufficient ${token.symbol}. Use /balance in private chat to fund your ${config.name} wallet.`,
+            `Insufficient ${token.symbol}. Use /balance_timba in private chat to fund your ${config.name} wallet.`,
           );
           return;
         }
@@ -685,7 +685,7 @@ export function registerEvmBot(
           if (action.phase === "failed" && !["create", "withdraw"].includes(action.kind))
             await bot.api.sendMessage(
               Number(action.user),
-              `Your ${config.name} ${action.kind} could not complete. Use /balance to check your wallet and try the game button again.`,
+              `Your ${config.name} ${action.kind} could not complete. Use /balance_timba to check your wallet and try the game button again.`,
             );
           store.notified(action.id);
         } catch (error) {

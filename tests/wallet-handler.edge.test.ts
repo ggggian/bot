@@ -106,8 +106,13 @@ describe("showWalletUI identity and DM handling", () => {
 
     await showWalletUI(ctx, deps());
 
-    expect(calls.find(([kind]) => kind === "send")![2]).toContain(
-      "Open a private chat with the bot",
+    expect(calls.find(([kind]) => kind === "send")![2]).toBe(
+      [
+        "❌ <b>I can’t DM you yet</b>",
+        "",
+        "Start a private chat with the bot so I can share your balances.",
+        "Open a private chat with the bot, tap <b>Start</b>, then run /balance_timba again.",
+      ].join("\n"),
     );
   });
 

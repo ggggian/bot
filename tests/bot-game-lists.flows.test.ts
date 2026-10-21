@@ -92,6 +92,15 @@ describe("/help", () => {
       expect(reply.payload.text).toContain(command);
     }
   });
+
+  test("lists /balance_timba for the wallet, with /start and /balance as its aliases", async () => {
+    await sendText("/help", { userId: USER });
+
+    const lines = lastCall("sendMessage")!.payload.text.split("\n");
+    expect(lines.filter((line: string) => line.includes("Open your wallet"))).toEqual([
+      "/balance_timba: Open your wallet (or /start, /balance)",
+    ]);
+  });
 });
 
 describe("/settings", () => {

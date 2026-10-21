@@ -107,8 +107,9 @@ test("parseTransactionError handles 'no record of prior credit' Solana error", a
     "Transaction simulation failed: Attempt to debit an account but found no record of a prior credit.",
   );
   const message = await parseTransactionError(error);
-  expect(message).toContain("Not enough tokens");
-  expect(message).toContain("/balance");
+  expect(message).toBe(
+    "💰 Not enough tokens\nCheck your balance with /balance_timba and top up before trying again.",
+  );
 });
 
 test("parseTransactionError handles 'attempt to debit' variant", async () => {

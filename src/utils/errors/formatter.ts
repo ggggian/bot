@@ -163,7 +163,8 @@ const errorHandlers: Array<{ matcher: (ctx: ErrorContext) => boolean; handler: E
       ctx.lowerMessage.includes("no record of a prior credit") ||
       ctx.lowerMessage.includes("attempt to debit an account"),
     handler: () =>
-      `💰 Not enough tokens\n` + `Check your balance with /balance and top up before trying again.`,
+      `💰 Not enough tokens\n` +
+      `Check your balance with /balance_timba and top up before trying again.`,
   },
   {
     matcher: (ctx) =>

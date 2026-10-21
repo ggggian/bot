@@ -269,8 +269,8 @@ export async function showWalletUI(ctx: any, deps: ShowWalletUIDeps) {
     const botUsername = ctx?.me?.username;
     const botMention = botUsername ? `@${botUsername}` : "the bot";
     const startInstruction = botUsername
-      ? `Tap <a href="https://t.me/${botUsername}">${botMention}</a> and press <b>Start</b>, then run /balance again.`
-      : "Open a private chat with the bot, tap <b>Start</b>, then run /balance again.";
+      ? `Tap <a href="https://t.me/${botUsername}">${botMention}</a> and press <b>Start</b>, then run /balance_timba again.`
+      : "Open a private chat with the bot, tap <b>Start</b>, then run /balance_timba again.";
 
     const lines = [
       "❌ <b>I can’t DM you yet</b>",

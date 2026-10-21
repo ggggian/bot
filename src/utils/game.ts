@@ -1552,7 +1552,7 @@ export class GameManager {
 
     // Check if user has no token account at all (balance = 0)
     if (tokenBalance === 0) {
-      return `❌ You don't have any ${safeTicker} tokens. You need ${formattedNeed} ${safeTicker} to join this game. Use /balance to check your address and transfer tokens.`;
+      return `❌ You don't have any ${safeTicker} tokens. You need ${formattedNeed} ${safeTicker} to join this game. Use /balance_timba to check your address and transfer tokens.`;
     }
 
     return `❌ Not enough ${safeTicker}. You have ${formattedBalance} but need ${formattedNeed}. Add more ${safeTicker} or reduce the amount and try again.`;

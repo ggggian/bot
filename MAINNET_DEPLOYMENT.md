@@ -42,7 +42,7 @@ Do not use `sudo` for rootless Podman. If the checkout path changes, update the 
 
 ## Service Checks
 
-- Verify `/balance` and `/oracle` return mainnet data.
+- Verify `/balance_timba` and `/oracle` return mainnet data.
 - Confirm the Bot can reach `http://oracle:3001` on the private Podman network.
 - On v0.2.0, confirm the expected `GameToken` accounts exist. On v0.3.0, confirm the authenticated Oracle `/token-policies` endpoint returns the expected enabled mints and minimum amounts.
 - Keep its Solana wallets funded.

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import fc from "fast-check";
 import { evmAccount } from "./wallet";
 import { EvmBotStore } from "./store";
 import { gameCallback, callbackGame } from "./bot";
@@ -56,6 +57,60 @@ test("network routing preserves canonical syntax, mentions and deep links", asyn
     command: "ewithdraw",
     args: "TEST .5 0x123",
   });
+});
+
+test("network routing sends /balance_timba to the EVM wallet like /balance", async () => {
+  const { routeNetworkCommand } = await import("./command-router");
+  expect(routeNetworkCommand("/balance_timba", "TimbaBot", "evm")).toEqual({
+    command: "evm",
+    args: "",
+  });
+  expect(routeNetworkCommand("/balance_timba@AnotherBot", "TimbaBot", "evm")).toBeNull();
+  expect(routeNetworkCommand("/balance_timba", "TimbaBot", "solana")).toBeNull();
+  fc.assert(
+    fc.property(
+      fc.mixedCase(fc.constant("balance_timba")),
+      fc.option(fc.mixedCase(fc.constant("TimbaBot")), { nil: undefined }),
+      (name, mention) => {
+        const text = `/${name}${mention === undefined ? "" : `@${mention}`}`;
+        expect(routeNetworkCommand(text, "TimbaBot", "evm")).toEqual({ command: "evm", args: "" });
+      },
+    ),
+  );
+});
+
+test("network routing sends each known name to its command and ignores the rest, such as /constructor", async () => {
+  const { routeNetworkCommand } = await import("./command-router");
+  const routes = new Map([
+    ["cf", "ecf"],
+    ["coinflip", "ecf"],
+    ["ga", "egiveaway"],
+    ["giveaway", "egiveaway"],
+    ["balance", "evm"],
+    ["balance_timba", "evm"],
+    ["wallet", "evm"],
+    ["invite", "einvite"],
+    ["withdraw", "ewithdraw"],
+    ["wh", "ewithdraw"],
+    ["start", "evm"],
+  ]);
+  for (const text of ["/constructor", "/Constructor@TimbaBot", "/__proto__"]) {
+    expect(routeNetworkCommand(text, "TimbaBot", "evm")).toBeNull();
+  }
+  fc.assert(
+    fc.property(
+      fc.mixedCase(
+        fc.oneof(
+          fc.constantFrom(...routes.keys(), "constructor", "__proto__"),
+          fc.stringMatching(/^[a-z_]{1,16}$/),
+        ),
+      ),
+      (name) => {
+        const route = routeNetworkCommand(`/${name}`, "TimbaBot", "evm");
+        expect(route?.command ?? null).toBe(routes.get(name.toLowerCase()) ?? null);
+      },
+    ),
+  );
 });
 
 test("network preference changes do not mutate pending actions", () => {

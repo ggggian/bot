@@ -225,6 +225,17 @@ describe("EVM command routing", () => {
     expect(h.fallthrough).toEqual(["/balance"]);
     await h.text("/invite 0x12 34");
     expect(h.fallthrough).toEqual(["/balance", "/invite 0x12 34"]);
+    await h.text("/balance_timba");
+    expect(h.fallthrough).toEqual(["/balance", "/invite 0x12 34", "/balance_timba"]);
+  });
+
+  test("an EVM chat passes /constructor and /__proto__ on to Solana like any unknown command", async () => {
+    useEvm();
+    await h.text("/constructor");
+    await h.text("/__proto__");
+
+    expect(h.fallthrough).toEqual(["/constructor", "/__proto__"]);
+    expect(h.replies()).toEqual([]);
   });
 
   test("unknown tokens are rejected when the oracle is offline", async () => {
@@ -380,7 +391,9 @@ describe("EVM wallet commands", () => {
   test("the wallet opens only in private chats and shows balances", async () => {
     useEvm(-100);
     await h.text("/balance", { chat: "group" });
-    expect(h.replies().at(-1)).toContain("Open a private chat with me");
+    expect(h.replies().at(-1)).toBe(
+      "Open a private chat with me and use /balance_timba to view your wallet.",
+    );
 
     useEvm();
     await h.text("/balance");
@@ -394,6 +407,29 @@ describe("EVM wallet commands", () => {
     h.metadata.mockRejectedValue(new Error("offline"));
     await h.text("/wallet");
     expect(h.replies().at(-1)).toBe("Anvil wallet is temporarily unavailable.");
+  });
+
+  test("/balance_timba opens the same EVM wallet as /balance", async () => {
+    useEvm();
+    const sent = () => h.calls.filter((c) => c.method === "sendMessage").map((c) => c.payload);
+    const first = await h.text("/balance");
+    const [balance] = sent();
+    const second = await h.text("/balance_timba");
+
+    expect(balance.text).toBe(
+      [
+        "Anvil address 🔎",
+        "",
+        "<code>0x2833834d39d153c92280E5CF1B318580aAB4a1CC</code> (Tap to copy)",
+        "",
+        "ETH: <code>1</code>",
+        "TEST: <code>1000000000000</code>",
+        "USDC: <code>1000000000000000000000000</code>",
+      ].join("\n"),
+    );
+    expect(balance.reply_to_message_id).toBe(first);
+    expect(sent()).toEqual([balance, { ...balance, reply_to_message_id: second }]);
+    expect(h.fallthrough).toEqual([]);
   });
 
   test("the withdraw button explains the command in private chats only", async () => {
@@ -585,7 +621,9 @@ describe("EVM game commands", () => {
     useEvm();
     h.balances.set(h.runtime.service.account("1").address, 0n);
     await h.text("/ga 1 TEST 5 private");
-    expect(h.replies().at(-1)).toContain("Insufficient TEST");
+    expect(h.replies().at(-1)).toBe(
+      "Insufficient TEST. Use /balance_timba in private chat to fund your Anvil wallet.",
+    );
   });
 
   test("giveaways record players, visibility and the chat default token", async () => {
@@ -728,7 +766,7 @@ describe("EVM refresh loop", () => {
     expect(edits).toContain("Withdrawal confirmed on Anvil. Transaction: 0xab");
     expect(edits).toContain("Withdrawal failed. Check your token and ETH balances.");
     expect(h.replies()).toContain(
-      "Your Anvil join could not complete. Use /balance to check your wallet and try the game button again.",
+      "Your Anvil join could not complete. Use /balance_timba to check your wallet and try the game button again.",
     );
     expect(h.store.unnotified()).toHaveLength(0);
     step.mockRestore();

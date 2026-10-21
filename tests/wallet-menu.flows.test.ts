@@ -69,7 +69,7 @@ afterEach(() => {
   restoreStubs();
 });
 
-describe("/start and /balance", () => {
+describe("/balance_timba, /start and /balance", () => {
   const walletCard = () =>
     calls.filter((call) => /^send(Photo|Video|Animation|Message)$/.test(call.method)).at(-1);
   const cardText = () => String(walletCard()?.payload.caption ?? walletCard()?.payload.text ?? "");
@@ -81,13 +81,34 @@ describe("/start and /balance", () => {
     expect(cardText()).toContain("SOL: <code>2</code> SOL");
   });
 
+  test("/balance_timba, /start and /balance open the same wallet in a private chat", async () => {
+    const sent: any[][] = [];
+    for (const command of ["/balance_timba", "/Balance_Timba@test_bot", "/start", "/balance"]) {
+      resetCalls();
+      await sendText(command, { userId: USER, messageId: 4_400 });
+      sent.push(
+        calls
+          .filter((call) => /^send(Photo|Video|Animation|Message)$/.test(call.method))
+          .map(({ method, payload }) => ({ method, payload })),
+      );
+    }
+
+    const first = sent[0]!;
+    expect(first).toHaveLength(1);
+    expect(first[0].payload.chat_id).toBe(USER);
+    expect(String(first[0].payload.caption ?? first[0].payload.text)).toContain(
+      "SOL: <code>2</code> SOL",
+    );
+    expect(sent).toEqual([first, first, first, first]);
+  });
+
   const GROUP = -4_401;
   const SUMMARY_FOOTER = "<i>The full wallet menu is in our private chat.</i>";
   const DM_NOTICE = [
     "❌ <b>I can’t DM you yet</b>",
     "",
     "Start a private chat with the bot so I can share your balances.",
-    'Tap <a href="https://t.me/test_bot">@test_bot</a> and press <b>Start</b>, then run /balance again.',
+    'Tap <a href="https://t.me/test_bot">@test_bot</a> and press <b>Start</b>, then run /balance_timba again.',
   ].join("\n");
   const groupMessages = () =>
     calls.filter((call) => call.method === "sendMessage" && call.payload.chat_id === GROUP);
@@ -112,6 +133,23 @@ describe("/start and /balance", () => {
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
         reply_parameters: { message_id: 4_402, allow_sending_without_reply: true },
+        ephemeral_message_parameters: { receiver_user_id: USER },
+      },
+    ]);
+  });
+
+  test("/balance_timba in a group sends the wallet privately and a copy only the sender sees", async () => {
+    await sendText("/Balance_Timba@test_bot", { userId: USER, chatId: GROUP, messageId: 4_407 });
+
+    const caption = String(dmCard()?.payload.caption);
+    expect(caption).toContain("SOL: <code>2</code> SOL");
+    expect(groupMessages().map((call) => call.payload)).toEqual([
+      {
+        chat_id: GROUP,
+        text: `${caption}\n\n${SUMMARY_FOOTER}`,
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        reply_parameters: { message_id: 4_407, allow_sending_without_reply: true },
         ephemeral_message_parameters: { receiver_user_id: USER },
       },
     ]);

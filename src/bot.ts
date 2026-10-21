@@ -3593,7 +3593,7 @@ registerCaseInsensitiveCommand("deposit", "Add funds to your wallet")(lightningD
 
 /** Menu order, grouped wallet → games → info → settings. */
 const BOT_MENU_ORDER = [
-  "start",
+  "balance_timba",
   "deposit",
   "withdraw",
   "tip",
@@ -3678,8 +3678,9 @@ const evmRuntime = createEvmRuntime(bot);
 
 bot.use(caseInsensitiveCommands);
 
+// In groups, other bots answer /start and /balance too, so the menu shows a name of its own.
 registerCaseInsensitiveCommand(
-  ["start", "balance"],
+  ["balance_timba", "start", "balance"],
   "Open your wallet",
 )(async (ctx: Context) => {
   if (ctx.chat?.id) {
@@ -4122,7 +4123,7 @@ registerCaseInsensitiveCommand(
     "/globalboard: Top players everywhere (or /gb)",
     "",
     "<b>💰 Wallet</b>",
-    "/start: Open your wallet (or /balance)",
+    "/balance_timba: Open your wallet (or /start, /balance)",
     "/deposit: Add funds (private chat)",
     "/withdraw &lt;address&gt; &lt;amount&gt; [token]: Send to another wallet (or /wh)",
     "/tip @user &lt;amount&gt; [token]: Tip someone, or reply to their message",

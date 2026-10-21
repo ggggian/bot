@@ -204,11 +204,11 @@ describe("Game Join Message Recreation", () => {
   test.each([
     [
       "❌ Not enough TIMBA. You have 1,000 but need 55,106. Add more TIMBA or reduce the amount and try again.",
-      "❌ Not enough TOK to join this game. Check /balance and try again.",
+      "❌ Not enough TOK to join this game. Check /balance_timba and try again.",
     ],
     [
-      "❌ You don't have any TIMBA tokens. You need 55,106 TIMBA to join this game. Use /balance to check your address and transfer tokens.",
-      "❌ Not enough TOK to join this game. Check /balance and try again.",
+      "❌ You don't have any TIMBA tokens. You need 55,106 TIMBA to join this game. Use /balance_timba to check your address and transfer tokens.",
+      "❌ Not enough TOK to join this game. Check /balance_timba and try again.",
     ],
     [
       "💰 You need about 0.002 SOL more to join this game.\n\nAdd SOL and try again.",

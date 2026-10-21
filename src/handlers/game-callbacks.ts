@@ -145,7 +145,7 @@ const describeJoinFailure = (error: string, tokenTicker: string): string => {
     return "❌ Not enough SOL for network fees to join. Add SOL and try again.";
   }
   if (containsBalanceInfo(error) || /not enough|don't have any|below the required/i.test(error)) {
-    return `❌ Not enough ${tokenTicker} to join this game. Check /balance and try again.`;
+    return `❌ Not enough ${tokenTicker} to join this game. Check /balance_timba and try again.`;
   }
   return "Failed to join game. Please try again.";
 };

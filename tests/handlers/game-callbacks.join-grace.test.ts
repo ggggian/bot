@@ -139,7 +139,7 @@ describe("join callback grace toast", () => {
         expect(wallet.getTokenBalance).toHaveBeenCalledWith(555n, player.publicKey.toBase58());
         expect(wallet.getBalance).toHaveBeenCalledWith(555n);
         expect(answers).toEqual([
-          "❌ Not enough TIMBA to join this game. Check /balance and try again.",
+          "❌ Not enough TIMBA to join this game. Check /balance_timba and try again.",
         ]);
         expect(replies).toEqual([]);
         expect(solBalanceResolved).toBe(false);

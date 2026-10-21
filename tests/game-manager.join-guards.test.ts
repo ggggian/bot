@@ -484,8 +484,9 @@ describe("GameManager.joinGame guards", () => {
       1n,
     );
     expect(res.success).toBe(false);
-    expect(res.error).toMatch(/don't have any TOK tokens/i);
-    expect(res.error).toMatch(/\/balance/i);
+    expect(res.error).toBe(
+      "❌ You don't have any TOK tokens. You need 1 TOK to join this game. Use /balance_timba to check your address and transfer tokens.",
+    );
   });
 
   test("returns error on insufficient balance for giveaway", async () => {
