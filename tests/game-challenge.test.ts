@@ -502,20 +502,28 @@ describe("resolveNamedChallenges", () => {
     expect(users.lookups).toEqual(["@rival", "@ghost"]);
   });
 
-  test("someone named twice is challenged once", async () => {
+  test("a name typed twice is looked up and counted once", async () => {
+    const users = directory();
+
     expect(
-      await resolveNamedChallenges(
-        group(),
-        names("/cf 5 @rival @bo @Rival"),
-        CREATOR,
-        directory(),
-        3,
-      ),
+      await resolveNamedChallenges(group(), names("/cf 5 @rival @bo @Rival"), CREATOR, users, 2),
     ).toEqual({
       challenge: [
         { telegramId: "5150", displayName: "@rival" },
         { telegramId: "6160", displayName: "@bo" },
       ],
+    });
+    expect(users.lookups).toEqual(["@rival", "@bo"]);
+  });
+
+  test("someone both picked and typed is challenged once", async () => {
+    const picked = findNamedUsers({
+      text: "/cf 5 Ana @rival",
+      entities: [{ type: "text_mention", offset: 6, length: 3, user: PEOPLE[0] }],
+    } as any)!;
+
+    expect(await resolveNamedChallenges(group(), picked, CREATOR, directory(), 2)).toEqual({
+      challenge: [{ telegramId: "5150", displayName: "@rival" }],
     });
   });
 

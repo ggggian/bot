@@ -127,6 +127,9 @@ export type NamedChallenges = { challenge: ChallengedPlayer[] } | { refusal: str
 const tooManyChallengedMessage = (maxChallenged: number): string =>
   `You can challenge up to ${maxChallenged} ${maxChallenged === 1 ? "person" : "people"} at once.`;
 
+const nameKey = (named: Pick<NamedUser, "user" | "username">): string =>
+  named.user ? `id ${named.user.id}` : `@${named.username?.replace(/^@/, "").toLowerCase()}`;
+
 /**
  * A coinflip that names people challenges each of them, found one by one as
  * resolveNamedChallenge finds them. Any refusal refuses the whole challenge,
@@ -139,12 +142,16 @@ export const resolveNamedChallenges = async (
   directory: UsernameDirectory,
   maxChallenged: number,
 ): Promise<NamedChallenges> => {
+  // The same name typed twice is looked up and counted once.
+  const users = named.users.filter(
+    (user, index) => named.users.findIndex((other) => nameKey(other) === nameKey(user)) === index,
+  );
   // Counted before any lookup, so a long list costs no Telegram calls.
-  if (named.users.length > maxChallenged) {
+  if (users.length > maxChallenged) {
     return { refusal: tooManyChallengedMessage(maxChallenged) };
   }
   const challenge: ChallengedPlayer[] = [];
-  for (const user of named.users) {
+  for (const user of users) {
     const target = await resolveNamedChallenge(ctx, user, creatorTelegramId, directory);
     if ("refusal" in target) return target;
     if (!challenge.some((player) => player.telegramId === target.challenge.telegramId)) {

@@ -519,6 +519,18 @@ describe("GameManager.formatGameMessage for a challenge", () => {
     expect(res.messageText).toContain("\nStatus: ▰▰▰▱ Needs 1 more player to start");
   });
 
+  test("a player list behind the joined count never names someone who already accepted", async () => {
+    const res = await render({
+      ticketsCount: 3,
+      seats: 4,
+      onChainPlayers: { [WALLET.creator]: "4242", [WALLET.bo]: "6160" },
+      getGameChallenge: () => THREE,
+    });
+
+    expect(res.messageText).toContain("\nStatus: ▰▰▰▱ Needs 1 more player to start");
+    expect(res.messageText).not.toContain("Waiting for");
+  });
+
   test("when who accepted cannot be read, the card counts the seats instead", async () => {
     const failure = new Error("synthetic-read-failure");
     const warn = spyOn(console, "warn").mockImplementation(() => {});

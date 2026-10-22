@@ -3250,9 +3250,12 @@ export class GameManager {
       challenge.length > 0 && !challengeAccepted
         ? this.challengedWaiting(challenge, (participantAddresses ?? []).slice(0, currentTickets))
         : [];
-    // Without anyone left to name, the count is what is still true.
+    // Names only when they add up to the seats left, so a player list that lags
+    // or a wallet the bot cannot place never names someone who already joined;
+    // otherwise the count is what is still true.
     const statusText =
-      challenge.length > 0 && (challengeAccepted || waiting.length > 0)
+      challenge.length > 0 &&
+      (challengeAccepted || waiting.length === challenge.length + 1 - currentTickets)
         ? buildChallengeStatus(
             challengeAccepted,
             waiting.map((player) =>

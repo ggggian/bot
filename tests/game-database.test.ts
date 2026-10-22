@@ -1037,15 +1037,6 @@ test("replacement survives restart and fences stale workers and concurrent repla
 const RIVAL = { telegramId: "5150", displayName: "@rival" };
 const BO = { telegramId: "6160", displayName: "@bo" };
 const CID = { telegramId: "7171", displayName: "Cid" };
-/** What the bot does at startup: open the same file again and run its schema. */
-const afterRestart = <T>(use: (db: GameDatabase) => T): T => {
-  const db: any = new (GameDatabase as any)();
-  try {
-    return use(db);
-  } finally {
-    db.db.close();
-  }
-};
 const saveOldFormatChallenge = (gameAddress: string, createdAt: number) => {
   (GameDatabase.getInstance() as any).db
     .prepare(
@@ -1080,18 +1071,44 @@ test("a game's challenged players can be neither replaced nor added to", () => {
 test("a challenge naming someone twice saves no one", () => {
   const db = GameDatabase.getInstance();
 
-  expect(() => db.saveGameChallenge("challenge_game", [RIVAL, BO, RIVAL])).toThrow();
-  expect(db.getGameChallenge("challenge_game")).toEqual([]);
+  for (const [game, challenge] of [
+    ["first_twice", [RIVAL, BO, RIVAL]],
+    ["other_twice", [RIVAL, BO, BO]],
+  ] as const) {
+    expect(() => db.saveGameChallenge(game, challenge)).toThrow();
+    expect(db.getGameChallenge(game)).toEqual([]);
+  }
 });
 
-test("a challenge saved before several players could be named still reads back once", () => {
+test("a challenge naming no one saves nothing", () => {
+  const db = GameDatabase.getInstance();
+
+  db.saveGameChallenge("open_game", []);
+
+  expect(db.getGameChallenge("open_game")).toEqual([]);
+});
+
+test("a challenge saved before several players could be named still reads back", () => {
   saveOldFormatChallenge("old_format_game", 1_700);
 
-  const read = () => afterRestart((db) => db.getGameChallenge("old_format_game"));
+  expect(GameDatabase.getInstance().getGameChallenge("old_format_game")).toEqual([RIVAL]);
+});
 
-  expect(read()).toEqual([RIVAL]);
-  // A second restart copies nothing twice.
-  expect(read()).toEqual([RIVAL]);
+test("a bot from before several players could be named reads only the first one", () => {
+  const db = GameDatabase.getInstance();
+  db.saveGameChallenge("challenge_game", [CID, RIVAL, BO], 1_700);
+
+  // The query that bot reads a challenge with.
+  const oldRead = (db as any).db
+    .prepare(
+      `SELECT challenged_telegram_id, challenged_display_name
+        FROM game_challenges WHERE game_address = ?`,
+    )
+    .all("challenge_game");
+
+  expect(oldRead).toEqual([
+    { challenged_telegram_id: CID.telegramId, challenged_display_name: CID.displayName },
+  ]);
 });
 
 test("cleanupOldGames drops the challenges of the games it deletes only", () => {
@@ -1129,13 +1146,9 @@ test("cleanupOldGames drops old challenges whose game was never created", () => 
 test("cleanupOldGames drops old challenges saved before several players could be named", () => {
   const thirtyOneDaysAgo = Date.now() - 31 * 24 * 60 * 60 * 1000;
   saveOldFormatChallenge("old_format_game", thirtyOneDaysAgo);
+  const db = GameDatabase.getInstance();
 
-  const cleaned = afterRestart((db) => {
-    const before = db.getGameChallenge("old_format_game");
-    db.cleanupOldGames(30);
-    return [before, db.getGameChallenge("old_format_game")];
-  });
+  db.cleanupOldGames(30);
 
-  expect(cleaned).toEqual([[RIVAL], []]);
-  expect(afterRestart((db) => db.getGameChallenge("old_format_game"))).toEqual([]);
+  expect(db.getGameChallenge("old_format_game")).toEqual([]);
 });

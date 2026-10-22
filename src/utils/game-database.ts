@@ -205,17 +205,17 @@ export class GameDatabase extends BaseDatabase {
         )`,
         `CREATE INDEX IF NOT EXISTS idx_pending_game_creations_retry
           ON pending_game_creations(next_attempt_at)`,
-        // One challenged player per game, as saved before a challenge could name
-        // several; copied into game_challenge_players below.
+        // Written before the creation transaction is built, so no recovery path
+        // can see the game on chain without its challenged players.
         `CREATE TABLE IF NOT EXISTS game_challenges (
           game_address TEXT PRIMARY KEY,
           challenged_telegram_id TEXT NOT NULL,
           challenged_display_name TEXT NOT NULL,
           created_at INTEGER NOT NULL
         )`,
-        // Written before the creation transaction is built, so no recovery path
-        // can see the game on chain without its challenged players.
-        `CREATE TABLE IF NOT EXISTS game_challenge_players (
+        // The challenged players after the first one, who stays in game_challenges:
+        // a bot from before several could be named then lets only them in.
+        `CREATE TABLE IF NOT EXISTS game_challenge_extra_players (
           game_address TEXT NOT NULL,
           position INTEGER NOT NULL,
           telegram_id TEXT NOT NULL,
@@ -224,10 +224,6 @@ export class GameDatabase extends BaseDatabase {
           PRIMARY KEY (game_address, position),
           UNIQUE (game_address, telegram_id)
         )`,
-        `INSERT OR IGNORE INTO game_challenge_players
-          (game_address, position, telegram_id, display_name, created_at)
-          SELECT game_address, 0, challenged_telegram_id, challenged_display_name, created_at
-          FROM game_challenges`,
       ],
       "Game",
     );
@@ -616,7 +612,7 @@ export class GameDatabase extends BaseDatabase {
 
     // A challenge is saved before its game reaches the chain, so a failed
     // creation leaves one without a game row: those go by their own age.
-    for (const table of ["game_challenges", "game_challenge_players"]) {
+    for (const table of ["game_challenges", "game_challenge_extra_players"]) {
       this.run(
         `DELETE FROM ${table}
          WHERE game_address IN (
@@ -736,15 +732,27 @@ export class GameDatabase extends BaseDatabase {
     challenge: readonly ChallengedPlayer[],
     now: number = Date.now(),
   ): void {
+    const [first, ...others] = challenge;
+    if (!first) return;
     // Plain INSERTs: a game address never changes its challenged players, so
-    // saving it again fails on the first position and saves none.
+    // saving it again fails on the first one and saves none.
     const save = this.db.transaction(() => {
-      challenge.forEach((player, position) => {
+      this.run(
+        `INSERT INTO game_challenges
+          (game_address, challenged_telegram_id, challenged_display_name, created_at)
+          VALUES (?, ?, ?, ?)`,
+        [gameAddress, first.telegramId, first.displayName, now],
+        "saving game challenge",
+      );
+      others.forEach((player, index) => {
+        if (player.telegramId === first.telegramId) {
+          throw new Error("A challenge names each player once");
+        }
         this.run(
-          `INSERT INTO game_challenge_players
+          `INSERT INTO game_challenge_extra_players
             (game_address, position, telegram_id, display_name, created_at)
             VALUES (?, ?, ?, ?, ?)`,
-          [gameAddress, position, player.telegramId, player.displayName, now],
+          [gameAddress, index + 1, player.telegramId, player.displayName, now],
           "saving game challenge",
         );
       });
@@ -755,9 +763,14 @@ export class GameDatabase extends BaseDatabase {
   /** The players a challenge coinflip names, in order; none for other games. */
   public getGameChallenge(gameAddress: string): ChallengedPlayer[] {
     return this.all<{ telegram_id: string; display_name: string }>(
-      `SELECT telegram_id, display_name FROM game_challenge_players
-        WHERE game_address = ? ORDER BY position`,
-      [gameAddress],
+      `SELECT challenged_telegram_id AS telegram_id, challenged_display_name AS display_name,
+          0 AS position
+        FROM game_challenges WHERE game_address = ?
+        UNION ALL
+        SELECT telegram_id, display_name, position
+        FROM game_challenge_extra_players WHERE game_address = ?
+        ORDER BY position`,
+      [gameAddress, gameAddress],
       "getting game challenge",
     ).map((row) => ({ telegramId: row.telegram_id, displayName: row.display_name }));
   }
