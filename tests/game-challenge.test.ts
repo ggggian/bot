@@ -3,13 +3,15 @@ import {
   CHALLENGE_IN_GROUPS_MESSAGE,
   CHALLENGE_NAMED_NEEDS_AMOUNT_MESSAGE,
   CHALLENGE_NEEDS_AMOUNT_MESSAGE,
-  CHALLENGE_PLAYERS,
   challengeForSomeoneElseMessage,
-  findChallengeName,
+  challengeKeepsOut,
+  findChallengeNames,
   namedReplyRefusal,
   resolveChallengeTarget,
   resolveNamedChallenge,
+  resolveNamedChallenges,
 } from "../src/utils/game-challenge";
+import { findNamedUsers } from "../src/utils/user-mention";
 
 const CREATOR = 4242n;
 const reply = (replyToMessage: Record<string, unknown>) =>
@@ -88,29 +90,59 @@ describe("resolveChallengeTarget", () => {
 
 describe("challenge texts", () => {
   test("someone else tapping Accept is told who the challenge is for", () => {
-    expect(challengeForSomeoneElseMessage({ telegramId: "5150", displayName: "Ana Paz" })).toBe(
-      "This challenge is for Ana Paz.",
+    const ana = { telegramId: "5150", displayName: "Ana Paz" };
+    const bo = { telegramId: "6160", displayName: "@bo" };
+    const cid = { telegramId: "7171", displayName: "Cid" };
+    expect(challengeForSomeoneElseMessage([ana])).toBe("This challenge is for Ana Paz.");
+    expect(challengeForSomeoneElseMessage([ana, bo])).toBe(
+      "This challenge is for Ana Paz and @bo.",
+    );
+    expect(challengeForSomeoneElseMessage([ana, bo, cid])).toBe(
+      "This challenge is for Ana Paz, @bo and Cid.",
     );
   });
 
-  test("a challenge is one on one and the menu reply asks for an amount", () => {
-    expect(CHALLENGE_PLAYERS).toBe(2);
+  test("the menu reply asks for an amount", () => {
     expect(CHALLENGE_NEEDS_AMOUNT_MESSAGE).toBe(
       "To challenge someone, reply to their message with <code>/cf &lt;amount&gt; [TOKEN]</code>.",
     );
   });
 });
 
-describe("findChallengeName", () => {
+describe("challengeKeepsOut", () => {
+  const challenge = [
+    { telegramId: "5150", displayName: "@rival" },
+    { telegramId: "6160", displayName: "@bo" },
+  ];
+
+  test("a challenge keeps out everyone it does not name", () => {
+    expect(challengeKeepsOut(challenge, 5150n)).toBe(false);
+    expect(challengeKeepsOut(challenge, 6160n)).toBe(false);
+    expect(challengeKeepsOut(challenge, 7171n)).toBe(true);
+    expect(challengeKeepsOut(challenge, CREATOR)).toBe(true);
+  });
+
+  test("a game without a challenge keeps no one out", () => {
+    expect(challengeKeepsOut([], 7171n)).toBe(false);
+  });
+});
+
+describe("findChallengeNames", () => {
   const text = "/cf 5 @rival";
 
-  test("a command that replies to no one is read for a name", () => {
-    expect(findChallengeName({ text } as any)).toEqual({
-      user: null,
-      username: "@rival",
-      label: null,
+  test("a command that replies to no one is read for every name", () => {
+    expect(findChallengeNames({ text } as any)).toEqual({
+      users: [{ user: null, username: "@rival", label: null }],
       args: ["/cf", "5"],
       positions: [0, 1],
+    });
+    expect(findChallengeNames({ text: "/cf 5 @rival TKN @bo" } as any)).toEqual({
+      users: [
+        { user: null, username: "@rival", label: null },
+        { user: null, username: "@bo", label: null },
+      ],
+      args: ["/cf", "5", "TKN"],
+      positions: [0, 1, 3],
     });
   });
 
@@ -120,21 +152,22 @@ describe("findChallengeName", () => {
       { id: 7171, is_bot: true, first_name: "Bot" },
       { id: Number(CREATOR), is_bot: false, first_name: "Me" },
     ]) {
-      expect(findChallengeName({ text, ...reply({ from }) })).toBeNull();
+      expect(findChallengeNames({ text, ...reply({ from }) })).toBeNull();
     }
   });
 
   test("the implicit reply to a forum topic or a reply without a sender still reads the name", () => {
+    const rivalOnly = findNamedUsers({ text } as any);
     expect(
-      findChallengeName({
+      findChallengeNames({
         text,
         ...reply({
           from: { id: 8181, is_bot: false, first_name: "Topic Owner" },
           forum_topic_created: { name: "synthetic-topic", icon_color: 7322096 },
         }),
-      })?.username,
-    ).toBe("@rival");
-    expect(findChallengeName({ text, ...reply({ text: "synthetic" }) })?.username).toBe("@rival");
+      }),
+    ).toEqual(rivalOnly);
+    expect(findChallengeNames({ text, ...reply({ text: "synthetic" }) })).toEqual(rivalOnly);
   });
 });
 
@@ -175,6 +208,22 @@ describe("namedReplyRefusal", () => {
         ),
       ).toBe("To challenge someone, reply to their message or name them without replying.");
     }
+  });
+
+  test("a reply naming the replied user and anyone else is refused, wherever the other name is", () => {
+    const rival = { id: 5150, is_bot: false, first_name: "Ana", username: "Rival" };
+    for (const command of ["/cf 5 @rival @bo", "/cf 5 @bo SOL @rival"]) {
+      expect(namedReplyRefusal({ text: command, ...reply({ from: rival }) }, CREATOR)).toBe(
+        "To challenge someone, reply to their message or name them without replying.",
+      );
+    }
+  });
+
+  test("a reply naming the replied user twice is not refused", () => {
+    const rival = { id: 5150, is_bot: false, first_name: "Ana", username: "Rival" };
+    expect(
+      namedReplyRefusal({ text: "/cf 5 @rival @RIVAL", ...reply({ from: rival }) }, CREATOR),
+    ).toBeNull();
   });
 
   test("a reply naming the replied user is not refused", () => {
@@ -393,5 +442,117 @@ describe("resolveNamedChallenge", () => {
       "To challenge someone by name, use <code>/cf &lt;amount&gt; [TOKEN] @username</code>.",
     );
     expect(CHALLENGE_IN_GROUPS_MESSAGE).toBe("Challenges only work in groups.");
+  });
+});
+
+describe("resolveNamedChallenges", () => {
+  const PEOPLE = [
+    { id: 5150, is_bot: false, first_name: "Ana", username: "rival" },
+    { id: 6160, is_bot: false, first_name: "Bo", username: "bo" },
+    { id: 7171, is_bot: false, first_name: "Cid", username: "cid" },
+  ];
+  /** Telegram answering getChatMember for each of PEOPLE. */
+  const group = () =>
+    ({
+      chat: { id: -100 },
+      api: {
+        getChatMember: async (_chatId: number, userId: number) => ({
+          status: "member",
+          user: PEOPLE.find((person) => person.id === userId),
+        }),
+      },
+    }) as any;
+  const directory = () => {
+    const lookups: string[] = [];
+    return {
+      lookups,
+      findTelegramIdByUsername: (username: string) => {
+        lookups.push(username);
+        const found = PEOPLE.find((person) => `@${person.username}` === username.toLowerCase());
+        return found ? String(found.id) : null;
+      },
+    };
+  };
+  const names = (text: string) => findNamedUsers({ text } as any)!;
+
+  test("everyone named is challenged, in the order named", async () => {
+    const users = directory();
+
+    expect(
+      await resolveNamedChallenges(group(), names("/cf 5 @cid @rival @bo"), CREATOR, users, 3),
+    ).toEqual({
+      challenge: [
+        { telegramId: "7171", displayName: "@cid" },
+        { telegramId: "5150", displayName: "@rival" },
+        { telegramId: "6160", displayName: "@bo" },
+      ],
+    });
+    expect(users.lookups).toEqual(["@cid", "@rival", "@bo"]);
+  });
+
+  test("the first name that cannot be challenged refuses everyone, without looking up the rest", async () => {
+    const users = directory();
+
+    expect(
+      await resolveNamedChallenges(group(), names("/cf 5 @rival @ghost @bo"), CREATOR, users, 3),
+    ).toEqual({
+      refusal:
+        "I don't know who <code>@ghost</code> is. Reply to one of their messages to challenge them.",
+    });
+    expect(users.lookups).toEqual(["@rival", "@ghost"]);
+  });
+
+  test("someone named twice is challenged once", async () => {
+    expect(
+      await resolveNamedChallenges(
+        group(),
+        names("/cf 5 @rival @bo @Rival"),
+        CREATOR,
+        directory(),
+        3,
+      ),
+    ).toEqual({
+      challenge: [
+        { telegramId: "5150", displayName: "@rival" },
+        { telegramId: "6160", displayName: "@bo" },
+      ],
+    });
+  });
+
+  test("more names than the game seats are refused before anyone is looked up", async () => {
+    for (const [maxChallenged, answer] of [
+      [2, "You can challenge up to 2 people at once."],
+      [1, "You can challenge up to 1 person at once."],
+    ] as const) {
+      const users = directory();
+
+      expect(
+        await resolveNamedChallenges(
+          group(),
+          names("/cf 5 @rival @bo @cid"),
+          CREATOR,
+          users,
+          maxChallenged,
+        ),
+      ).toEqual({ refusal: answer });
+      expect(users.lookups).toEqual([]);
+    }
+  });
+
+  test("as many names as the game seats are all challenged", async () => {
+    const result = await resolveNamedChallenges(
+      group(),
+      names("/cf 5 @rival @bo"),
+      CREATOR,
+      directory(),
+      2,
+    );
+
+    expect(result).toEqual({
+      challenge: [
+        { telegramId: "5150", displayName: "@rival" },
+        { telegramId: "6160", displayName: "@bo" },
+      ],
+    });
   });
 });

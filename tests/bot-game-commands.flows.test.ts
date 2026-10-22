@@ -177,11 +177,53 @@ describe("/coinflip naming who to challenge through the bot", () => {
 
     expect(manager.findTelegramIdByUsername).toHaveBeenCalledWith("@rival");
     const call = manager.createGame!.mock.calls[0] as any[];
-    expect(call[2]).toBe(2);
+    expect(call.slice(2, 4)).toEqual([2, 2]);
     expect(call[6]).toMatchObject({
       isPrivate: true,
-      challenge: { telegramId: "5150", displayName: "@rival" },
+      challenge: [{ telegramId: "5150", displayName: "@rival" }],
     });
+  });
+
+  test("several known @usernames are all challenged in one private game that needs every one of them", async () => {
+    const ids: Record<string, string> = { "@rival": "5150", "@bo": "6160" };
+    manager.findTelegramIdByUsername = mock((username: string) => ids[username] ?? null);
+    overrideApiMethod("getChatMember", (payload) => ({
+      status: "member",
+      user: {
+        id: payload.user_id,
+        is_bot: false,
+        first_name: "Player",
+        username: payload.user_id === 5150 ? "rival" : "bo",
+      },
+    }));
+
+    await sendText("/cf 5 BONK @rival @bo", { userId: USER, chatId: GROUP });
+
+    expect(manager.findTelegramIdByUsername.mock.calls).toEqual([["@rival"], ["@bo"]]);
+    const call = manager.createGame!.mock.calls[0] as any[];
+    expect(call.slice(2, 4)).toEqual([3, 3]);
+    expect(call[6].isPrivate).toBe(true);
+    expect(call[6].challenge).toEqual([
+      { telegramId: "5150", displayName: "@rival" },
+      { telegramId: "6160", displayName: "@bo" },
+    ]);
+  });
+
+  test("one unknown @username among several opens nothing", async () => {
+    manager.findTelegramIdByUsername = mock((username: string) =>
+      username === "@rival" ? "5150" : null,
+    );
+    overrideApiMethod("getChatMember", (payload) => ({
+      status: "member",
+      user: { id: payload.user_id, is_bot: false, first_name: "Rival", username: "rival" },
+    }));
+
+    await sendText("/cf 5 BONK @rival @ghost", { userId: USER, chatId: GROUP });
+
+    expect(lastText()).toBe(
+      "I don't know who <code>@ghost</code> is. Reply to one of their messages to challenge them.",
+    );
+    expect(manager.createGame).not.toHaveBeenCalled();
   });
 
   test("a failed read is answered as such and opens nothing", async () => {

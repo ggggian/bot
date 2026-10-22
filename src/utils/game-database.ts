@@ -17,8 +17,8 @@ export interface LeaderboardStatsRecord {
   lostAmountByToken?: Record<string, number>;
 }
 
-/** The only player who may accept a challenge coinflip. */
-export interface GameChallenge {
+/** A player a challenge coinflip names; only they may accept it. */
+export interface ChallengedPlayer {
   telegramId: string;
   displayName: string;
 }
@@ -205,14 +205,29 @@ export class GameDatabase extends BaseDatabase {
         )`,
         `CREATE INDEX IF NOT EXISTS idx_pending_game_creations_retry
           ON pending_game_creations(next_attempt_at)`,
-        // Written before the creation transaction is built, so no recovery path
-        // can see the game on chain without its challenged player.
+        // One challenged player per game, as saved before a challenge could name
+        // several; copied into game_challenge_players below.
         `CREATE TABLE IF NOT EXISTS game_challenges (
           game_address TEXT PRIMARY KEY,
           challenged_telegram_id TEXT NOT NULL,
           challenged_display_name TEXT NOT NULL,
           created_at INTEGER NOT NULL
         )`,
+        // Written before the creation transaction is built, so no recovery path
+        // can see the game on chain without its challenged players.
+        `CREATE TABLE IF NOT EXISTS game_challenge_players (
+          game_address TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          telegram_id TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (game_address, position),
+          UNIQUE (game_address, telegram_id)
+        )`,
+        `INSERT OR IGNORE INTO game_challenge_players
+          (game_address, position, telegram_id, display_name, created_at)
+          SELECT game_address, 0, challenged_telegram_id, challenged_display_name, created_at
+          FROM game_challenges`,
       ],
       "Game",
     );
@@ -601,18 +616,20 @@ export class GameDatabase extends BaseDatabase {
 
     // A challenge is saved before its game reaches the chain, so a failed
     // creation leaves one without a game row: those go by their own age.
-    this.run(
-      `DELETE FROM game_challenges
-       WHERE game_address IN (
-         SELECT game_address FROM games WHERE created_at < ?
-       )
-       OR (
-         created_at < ?
-         AND game_address NOT IN (SELECT game_address FROM games)
-       )`,
-      [cutoffMs, cutoffMs],
-      "deleting old game challenges",
-    );
+    for (const table of ["game_challenges", "game_challenge_players"]) {
+      this.run(
+        `DELETE FROM ${table}
+         WHERE game_address IN (
+           SELECT game_address FROM games WHERE created_at < ?
+         )
+         OR (
+           created_at < ?
+           AND game_address NOT IN (SELECT game_address FROM games)
+         )`,
+        [cutoffMs, cutoffMs],
+        "deleting old game challenges",
+      );
+    }
 
     // Then delete the games themselves
     const gamesResult = this.run(
@@ -716,29 +733,33 @@ export class GameDatabase extends BaseDatabase {
 
   public saveGameChallenge(
     gameAddress: string,
-    challenge: GameChallenge,
+    challenge: readonly ChallengedPlayer[],
     now: number = Date.now(),
   ): void {
-    // Plain INSERT: a game address never changes its challenged player.
-    this.run(
-      `INSERT INTO game_challenges
-        (game_address, challenged_telegram_id, challenged_display_name, created_at)
-        VALUES (?, ?, ?, ?)`,
-      [gameAddress, challenge.telegramId, challenge.displayName, now],
-      "saving game challenge",
-    );
+    // Plain INSERTs: a game address never changes its challenged players, so
+    // saving it again fails on the first position and saves none.
+    const save = this.db.transaction(() => {
+      challenge.forEach((player, position) => {
+        this.run(
+          `INSERT INTO game_challenge_players
+            (game_address, position, telegram_id, display_name, created_at)
+            VALUES (?, ?, ?, ?, ?)`,
+          [gameAddress, position, player.telegramId, player.displayName, now],
+          "saving game challenge",
+        );
+      });
+    });
+    save();
   }
 
-  public getGameChallenge(gameAddress: string): GameChallenge | null {
-    const row = this.get<{ challenged_telegram_id: string; challenged_display_name: string }>(
-      `SELECT challenged_telegram_id, challenged_display_name
-        FROM game_challenges WHERE game_address = ?`,
+  /** The players a challenge coinflip names, in order; none for other games. */
+  public getGameChallenge(gameAddress: string): ChallengedPlayer[] {
+    return this.all<{ telegram_id: string; display_name: string }>(
+      `SELECT telegram_id, display_name FROM game_challenge_players
+        WHERE game_address = ? ORDER BY position`,
       [gameAddress],
       "getting game challenge",
-    );
-    return row
-      ? { telegramId: row.challenged_telegram_id, displayName: row.challenged_display_name }
-      : null;
+    ).map((row) => ({ telegramId: row.telegram_id, displayName: row.display_name }));
   }
 
   public gameExists(gameAddress: string): boolean {
