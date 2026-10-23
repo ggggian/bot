@@ -3333,27 +3333,19 @@ export class GameManager {
     if (accepted || currentTickets <= 1) {
       return named(challenge);
     }
-    const waiting = this.challengedWaiting(
-      challenge,
-      participantAddresses.slice(0, currentTickets),
-    );
-    return waiting.length === challenge.length + 1 - currentTickets ? named(waiting) : null;
-  }
-
-  /** The challenged players whose wallets are not among the game's participants. */
-  private challengedWaiting(
-    challenge: ChallengedPlayer[],
-    participantAddresses: string[],
-  ): ChallengedPlayer[] {
+    let waiting: ChallengedPlayer[];
     try {
       const joined = new Set(
-        participantAddresses.map((address) => this.gameDb.getPlayerTelegramId(address)),
+        participantAddresses
+          .slice(0, currentTickets)
+          .map((address) => this.gameDb.getPlayerTelegramId(address)),
       );
-      return challenge.filter((player) => !joined.has(player.telegramId));
+      waiting = challenge.filter((player) => !joined.has(player.telegramId));
     } catch (error) {
       console.warn("Failed to read who accepted a challenge:", error);
-      return [];
+      return null;
     }
+    return waiting.length === challenge.length + 1 - currentTickets ? named(waiting) : null;
   }
 
   private async buildGameMessagePayload(

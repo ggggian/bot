@@ -405,6 +405,7 @@ describe("GameManager.formatGameMessage for a challenge", () => {
     const res = await render({ ticketsCount: 1, getGameChallenge: () => [] });
 
     expect(res.messageText).toContain("Creator: @creator • 1/2 players");
+    expect(res.messageText).toContain("\nStatus: ▰▱ Needs 1 more player to start");
     expect(res.messageText).not.toContain("⚔️");
     expect(res.keyboard[0]?.[0]?.text).toBe("🎮 Join");
   });

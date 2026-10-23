@@ -1,4 +1,4 @@
-import { expect, test, beforeEach } from "bun:test";
+import { expect, test, beforeEach, spyOn } from "bun:test";
 import fc from "fast-check";
 import type { GameData } from "../src/types";
 import { GameDatabase } from "../src/utils/game-database";
@@ -1085,9 +1085,59 @@ test("a challenge naming someone twice saves no one", () => {
 test("a challenge naming no one saves nothing", () => {
   const db = GameDatabase.getInstance();
 
-  db.saveGameChallenge("open_game", []);
+  expect(() => db.saveGameChallenge("open_game", [])).not.toThrow();
 
   expect(db.getGameChallenge("open_game")).toEqual([]);
+});
+
+test("a challenge that fails partway saves no one", () => {
+  const db = GameDatabase.getInstance();
+  const instance = db as any;
+  const run = instance.run.bind(instance);
+  const failing = spyOn(instance, "run").mockImplementation((sql: any, ...rest: any[]) => {
+    if (String(sql).includes("game_challenge_extra_players")) {
+      throw new Error("synthetic-disk-full");
+    }
+    return run(sql, ...rest);
+  });
+  try {
+    expect(() => db.saveGameChallenge("challenge_game", [RIVAL, BO])).toThrow(
+      "synthetic-disk-full",
+    );
+  } finally {
+    failing.mockRestore();
+  }
+
+  expect(db.getGameChallenge("challenge_game")).toEqual([]);
+});
+
+test("the players after the first are stored in order from position 1, after the first one", () => {
+  const db = GameDatabase.getInstance();
+  db.saveGameChallenge("challenge_game", [CID, RIVAL, BO], 1_700);
+
+  const extras = (db as any).db
+    .prepare(
+      `SELECT game_address, position, telegram_id, display_name, created_at
+        FROM game_challenge_extra_players ORDER BY position`,
+    )
+    .all();
+
+  expect(extras).toEqual([
+    {
+      game_address: "challenge_game",
+      position: 1,
+      telegram_id: RIVAL.telegramId,
+      display_name: RIVAL.displayName,
+      created_at: 1_700,
+    },
+    {
+      game_address: "challenge_game",
+      position: 2,
+      telegram_id: BO.telegramId,
+      display_name: BO.displayName,
+      created_at: 1_700,
+    },
+  ]);
 });
 
 test("a challenge saved before several players could be named still reads back", () => {

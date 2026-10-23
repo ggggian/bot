@@ -221,8 +221,7 @@ export class GameDatabase extends BaseDatabase {
           telegram_id TEXT NOT NULL,
           display_name TEXT NOT NULL,
           created_at INTEGER NOT NULL,
-          PRIMARY KEY (game_address, position),
-          UNIQUE (game_address, telegram_id)
+          PRIMARY KEY (game_address, position)
         )`,
       ],
       "Game",
