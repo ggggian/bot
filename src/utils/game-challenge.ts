@@ -124,6 +124,9 @@ export const resolveNamedChallenge = async (
 /** Everyone a coinflip naming people challenges, or the HTML reply refusing it. */
 export type NamedChallenges = { challenge: ChallengedPlayer[] } | { refusal: string };
 
+/** Few enough that the card, which mentions each of them, stays well within Telegram's limit. */
+export const CHALLENGE_MAX_PEOPLE = 5;
+
 const tooManyChallengedMessage = (maxChallenged: number): string =>
   `You can challenge up to ${maxChallenged} ${maxChallenged === 1 ? "person" : "people"} at once.`;
 
@@ -168,9 +171,14 @@ export const challengeKeepsOut = (
 ): boolean =>
   challenge.length > 0 && !challenge.some((player) => player.telegramId === telegramId.toString());
 
-/** Plain text: callback answers do not render HTML. */
-export const challengeForSomeoneElseMessage = (challenge: readonly ChallengedPlayer[]): string =>
-  `This challenge is for ${formatNameList(challenge.map((player) => player.displayName))}.`;
+// Telegram shows no callback answer longer than this.
+const CALLBACK_ANSWER_CHAR_LIMIT = 200;
+
+/** Plain text: callback answers do not render HTML. Names that do not fit are left out. */
+export const challengeForSomeoneElseMessage = (challenge: readonly ChallengedPlayer[]): string => {
+  const named = `This challenge is for ${formatNameList(challenge.map((player) => player.displayName))}.`;
+  return named.length <= CALLBACK_ANSWER_CHAR_LIMIT ? named : "This challenge isn't for you.";
+};
 
 export const CHALLENGE_NEEDS_AMOUNT_MESSAGE =
   "To challenge someone, reply to their message with <code>/cf &lt;amount&gt; [TOKEN]</code>.";

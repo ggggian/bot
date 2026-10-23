@@ -3,6 +3,7 @@ import type { Context } from "grammy";
 import { getRequiredTelegramIdForContext, replyEphemeralToSender } from "../utils/context-helpers";
 import {
   CHALLENGE_IN_GROUPS_MESSAGE,
+  CHALLENGE_MAX_PEOPLE,
   CHALLENGE_NAMED_NEEDS_AMOUNT_MESSAGE,
   CHALLENGE_NEEDS_AMOUNT_MESSAGE,
   CHALLENGE_SAME_CHAT_MESSAGE,
@@ -64,7 +65,7 @@ export async function handleCoinflipCommand(ctx: Context & { message?: any }, de
       named,
       telegramId,
       deps.usernames,
-      deps.getMaxPlayers() - 1,
+      Math.min(CHALLENGE_MAX_PEOPLE, deps.getMaxPlayers() - 1),
     );
     if ("refusal" in target) {
       await replyEphemeralToSender(ctx, target.refusal, { parse_mode: "HTML" });

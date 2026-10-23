@@ -102,6 +102,28 @@ describe("challenge texts", () => {
     );
   });
 
+  test("five of the longest usernames still fit in the answer to someone else", () => {
+    const [a, b, c, d, e] = ["a", "b", "c", "d", "e"].map((letter) => `@${letter.repeat(32)}`);
+    const challenge = [a, b, c, d, e].map((displayName, index) => ({
+      telegramId: String(5150 + index),
+      displayName: displayName!,
+    }));
+
+    expect(challengeForSomeoneElseMessage(challenge)).toBe(
+      `This challenge is for ${a}, ${b}, ${c}, ${d} and ${e}.`,
+    );
+  });
+
+  test("names too long for Telegram's 200-character answer are left out", () => {
+    // "This challenge is for " and "." take 23 of the 200.
+    const named = (length: number) => [{ telegramId: "5150", displayName: "a".repeat(length) }];
+
+    expect(challengeForSomeoneElseMessage(named(177))).toBe(
+      `This challenge is for ${"a".repeat(177)}.`,
+    );
+    expect(challengeForSomeoneElseMessage(named(178))).toBe("This challenge isn't for you.");
+  });
+
   test("the menu reply asks for an amount", () => {
     expect(CHALLENGE_NEEDS_AMOUNT_MESSAGE).toBe(
       "To challenge someone, reply to their message with <code>/cf &lt;amount&gt; [TOKEN]</code>.",

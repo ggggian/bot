@@ -474,6 +474,8 @@ describe("game handler: coinflip naming several people to challenge", () => {
     { id: 6160, is_bot: false, first_name: "Bo", username: "bo" },
     { id: 7171, is_bot: false, first_name: "Cid", username: "cid" },
     { id: 8282, is_bot: true, first_name: "Helper", username: "helper_bot" },
+    { id: 9393, is_bot: false, first_name: "Dee", username: "dee" },
+    { id: 4545, is_bot: false, first_name: "Eve", username: "eve" },
   ];
   const RIVAL = { telegramId: "5150", displayName: "@rival" };
   const BO = { telegramId: "6160", displayName: "@bo" };
@@ -572,6 +574,44 @@ describe("game handler: coinflip naming several people to challenge", () => {
         "reply",
         "You can challenge up to 2 people at once.",
         { parse_mode: "HTML", ...ONLY_SENDER },
+      ],
+    ]);
+  });
+
+  test("more than five people are refused to the sender alone, before anyone is looked up", async () => {
+    const ctx = groupContext("/cf 100 @rival @bo @cid @dee @eve @ghost");
+    const { deps, created, lookups } = severalDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(lookups).toEqual([]);
+    expect(created).toEqual([]);
+    expect(ctx.__calls).toEqual([
+      [
+        "reply",
+        "You can challenge up to 5 people at once.",
+        { parse_mode: "HTML", ...ONLY_SENDER },
+      ],
+    ]);
+  });
+
+  test("five people are all challenged", async () => {
+    const ctx = groupContext("/cf 100 @rival @bo @cid @dee @eve");
+    const { deps, created } = severalDeps();
+
+    await handleCoinflipCommand(ctx, deps);
+
+    expect(created).toEqual([
+      [
+        ["/cf", "100"],
+        1n,
+        [
+          RIVAL,
+          BO,
+          { telegramId: "7171", displayName: "@cid" },
+          { telegramId: "9393", displayName: "@dee" },
+          { telegramId: "4545", displayName: "@eve" },
+        ],
       ],
     ]);
   });

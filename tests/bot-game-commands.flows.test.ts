@@ -3,6 +3,7 @@ import { Keypair } from "#solana";
 import {
   botModule,
   clearApiOverride,
+  lastCall,
   lastText,
   overrideApiMethod,
   resetCalls,
@@ -223,6 +224,21 @@ describe("/coinflip naming who to challenge through the bot", () => {
     expect(lastText()).toBe(
       "I don't know who <code>@ghost</code> is. Reply to one of their messages to challenge them.",
     );
+    expect(manager.createGame).not.toHaveBeenCalled();
+  });
+
+  test("naming more than five people is refused to the sender alone and opens nothing", async () => {
+    manager.findTelegramIdByUsername = mock(() => "5150");
+
+    await sendText("/cf 5 BONK @p1 @p2 @p3 @p4 @p5 @p6", { userId: USER, chatId: GROUP });
+
+    expect(lastCall("sendMessage")?.payload).toEqual({
+      chat_id: GROUP,
+      text: "You can challenge up to 5 people at once.",
+      parse_mode: "HTML",
+      ephemeral_message_parameters: { receiver_user_id: USER },
+    });
+    expect(manager.findTelegramIdByUsername).not.toHaveBeenCalled();
     expect(manager.createGame).not.toHaveBeenCalled();
   });
 
