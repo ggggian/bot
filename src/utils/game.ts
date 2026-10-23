@@ -3246,17 +3246,20 @@ export class GameManager {
       }
     }
 
+    // A lone challenged player is who is missing until the challenge is accepted.
+    // Among several, names show only when every joined wallet is listed and the
+    // ones left add up to the seats left, so a player list that lags or a wallet
+    // the bot cannot place never names someone who already joined; otherwise the
+    // count is what is still true.
     const joinedAddresses = (participantAddresses ?? []).slice(0, currentTickets);
     const waiting =
-      challenge.length > 0 && !challengeAccepted
+      challenge.length > 1 && !challengeAccepted
         ? this.challengedWaiting(challenge, joinedAddresses)
-        : [];
-    // Names only when every joined wallet is listed and the ones left add up to
-    // the seats left, so a player list that lags or a wallet the bot cannot place
-    // never names someone who already joined; otherwise the count is what is still true.
+        : challenge;
     const namesWaiting =
-      joinedAddresses.length === currentTickets &&
-      waiting.length === challenge.length + 1 - currentTickets;
+      challenge.length === 1 ||
+      (joinedAddresses.length === currentTickets &&
+        waiting.length === challenge.length + 1 - currentTickets);
     const statusText =
       challenge.length > 0 && (challengeAccepted || namesWaiting)
         ? buildChallengeStatus(

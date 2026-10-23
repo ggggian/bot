@@ -734,6 +734,9 @@ export class GameDatabase extends BaseDatabase {
   ): void {
     const [first, ...others] = challenge;
     if (!first) return;
+    if (new Set(challenge.map((player) => player.telegramId)).size !== challenge.length) {
+      throw new Error("A challenge names each player once");
+    }
     // Plain INSERTs: a game address never changes its challenged players, so
     // saving it again fails on the first one and saves none.
     const save = this.db.transaction(() => {
@@ -745,9 +748,6 @@ export class GameDatabase extends BaseDatabase {
         "saving game challenge",
       );
       others.forEach((player, index) => {
-        if (player.telegramId === first.telegramId) {
-          throw new Error("A challenge names each player once");
-        }
         this.run(
           `INSERT INTO game_challenge_extra_players
             (game_address, position, telegram_id, display_name, created_at)
