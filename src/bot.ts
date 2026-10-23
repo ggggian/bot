@@ -644,6 +644,7 @@ const parseOracleNumeric = (value: unknown): number | null => {
 
 export const __test_parseOracleNumeric = parseOracleNumeric;
 export const __test_getOracleMaxPlayers = getOracleMaxPlayers;
+export const __test_setOracleMaxPlayers = updateOracleMaxPlayers;
 
 const CONTRACT_EXAMPLE_LINES = (() => {
   const uniqueMints = new Set<string>([
