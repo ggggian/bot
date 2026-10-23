@@ -3246,16 +3246,19 @@ export class GameManager {
       }
     }
 
+    const joinedAddresses = (participantAddresses ?? []).slice(0, currentTickets);
     const waiting =
       challenge.length > 0 && !challengeAccepted
-        ? this.challengedWaiting(challenge, (participantAddresses ?? []).slice(0, currentTickets))
+        ? this.challengedWaiting(challenge, joinedAddresses)
         : [];
-    // Names only when they add up to the seats left, so a player list that lags
-    // or a wallet the bot cannot place never names someone who already joined;
-    // otherwise the count is what is still true.
+    // Names only when every joined wallet is listed and the ones left add up to
+    // the seats left, so a player list that lags or a wallet the bot cannot place
+    // never names someone who already joined; otherwise the count is what is still true.
+    const namesWaiting =
+      joinedAddresses.length === currentTickets &&
+      waiting.length === challenge.length + 1 - currentTickets;
     const statusText =
-      challenge.length > 0 &&
-      (challengeAccepted || waiting.length === challenge.length + 1 - currentTickets)
+      challenge.length > 0 && (challengeAccepted || namesWaiting)
         ? buildChallengeStatus(
             challengeAccepted,
             waiting.map((player) =>

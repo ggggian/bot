@@ -168,32 +168,67 @@ export const findNamedUser = (
 /** Everyone a command names, in the order they appear, and the words left. */
 export type NamedUsers = Pick<NamedUser, "args" | "positions"> & { users: NamedPerson[] };
 
+/** The characters an entity covers, or null when its offset cannot be used. */
+const entityRange = (entity: LooseEntity): { start: number; end: number } | null => {
+  if (typeof entity.offset !== "number" || entity.offset < 0) {
+    return null;
+  }
+  const length = typeof entity.length === "number" && entity.length > 0 ? entity.length : 1;
+  return { start: entity.offset, end: entity.offset + length };
+};
+
 /**
  * Finds everyone a command names: users picked from Telegram's mention list,
- * @username mentions and every other typed word starting with "@".
+ * @username mentions and every other typed word starting with "@". A mention
+ * may sit inside a word ("@ana,@bob"), so words are matched by the characters
+ * mentions cover, and an "@" a word holds outside them is a typed name too.
  */
 export const findNamedUsers = (
   message: Pick<Message, "text" | "entities"> | undefined,
 ): NamedUsers | null => {
   const { text, words, entities } = commandWords(message);
+  const spans = [...text.matchAll(/\S+/g)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
   const found: { person: NamedPerson; position: number }[] = [];
-  const removed = new Set<number>();
+  const marked = new Set<number>();
 
   for (const entity of entities) {
     const person = entity && typeof entity.type === "string" ? entityPerson(entity, text) : null;
     if (!person) {
       continue;
     }
-    const covered = entityWords(entity, text);
-    found.push({ person, position: covered.index ?? 0 });
-    for (const position of coveredPositions(covered)) {
-      removed.add(position);
+    const range = entityRange(entity);
+    const first = range
+      ? spans.findIndex((span) => span.start < range.end && span.end > range.start)
+      : -1;
+    // Someone who cannot be placed goes last and keeps every word.
+    found.push({ person, position: first === -1 ? words.length : first });
+    if (range) {
+      for (let index = range.start; index < Math.min(range.end, text.length); index += 1) {
+        marked.add(index);
+      }
     }
   }
 
-  words.forEach((word, position) => {
-    if (!removed.has(position) && isTypedName(word, position)) {
-      found.push({ person: { user: null, username: word, label: null }, position });
+  const removed = new Set<number>();
+  spans.forEach((span, position) => {
+    if (position === 0) {
+      return;
+    }
+    let unmarked = "";
+    for (let index = span.start; index < span.end; index += 1) {
+      unmarked += marked.has(index) ? "" : text.charAt(index);
+    }
+    // A word a mention covers is a name, and may hold a typed one after it.
+    const mentioned = unmarked !== words[position];
+    const at = mentioned ? unmarked.indexOf("@") : 0;
+    const typed = at === -1 ? "" : unmarked.slice(at);
+    if (isTypedName(typed, position)) {
+      found.push({ person: { user: null, username: typed, label: null }, position });
+    }
+    if (mentioned || isTypedName(typed, position)) {
       removed.add(position);
     }
   });

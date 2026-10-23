@@ -271,6 +271,13 @@ describe("GameManager.formatGameMessage for a challenge", () => {
   beforeEach(resetGameManager);
 
   const CHALLENGE = [{ telegramId: "5150", displayName: "@rival" }];
+  const WALLET = {
+    creator: "So11111111111111111111111111111111111111112",
+    rival: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    bo: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    cid: "SysvarRent111111111111111111111111111111111",
+  };
+  const CREATOR_JOINED = { [WALLET.creator]: "4242" };
   // Inserted after "@" so a name stays readable without pinging anyone.
   const WORD_JOINER = String.fromCharCode(0x2060);
   const render = async (options: {
@@ -331,7 +338,7 @@ describe("GameManager.formatGameMessage for a challenge", () => {
   };
 
   test("an open challenge names and mentions the challenged player, with an Accept button", async () => {
-    const res = await render({ ticketsCount: 1 });
+    const res = await render({ ticketsCount: 1, onChainPlayers: CREATOR_JOINED });
 
     expect(res.messageText).toContain("<b>⚔️ Challenge ");
     expect(res.messageText).toContain('@creator challenged <a href="tg://user?id=5150">@rival</a>');
@@ -425,7 +432,11 @@ describe("GameManager.formatGameMessage for a challenge", () => {
     const markup = [{ telegramId: "5150", displayName: "<b>Ana & Co</b>" }];
     const escaped = "&lt;b&gt;Ana &amp; Co&lt;/b&gt;";
 
-    const open = await render({ ticketsCount: 1, getGameChallenge: () => markup });
+    const open = await render({
+      ticketsCount: 1,
+      onChainPlayers: CREATOR_JOINED,
+      getGameChallenge: () => markup,
+    });
     expect(open.messageText).toContain(`challenged <a href="tg://user?id=5150">${escaped}</a>`);
     expect(open.messageText).toContain(`\nStatus: Waiting for ${escaped} to accept`);
     expect(open.messageText).not.toContain("<b>Ana");
@@ -444,12 +455,6 @@ describe("GameManager.formatGameMessage for a challenge", () => {
     { telegramId: "6160", displayName: "@bo" },
     { telegramId: "7171", displayName: "Cid" },
   ];
-  const WALLET = {
-    creator: "So11111111111111111111111111111111111111112",
-    rival: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-    bo: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
-    cid: "SysvarRent111111111111111111111111111111111",
-  };
   const RIVAL_LINK = '<a href="tg://user?id=5150">@rival</a>';
   const BO_LINK = '<a href="tg://user?id=6160">@bo</a>';
   const CID_LINK = '<a href="tg://user?id=7171">Cid</a>';
@@ -528,6 +533,13 @@ describe("GameManager.formatGameMessage for a challenge", () => {
     });
 
     expect(res.messageText).toContain("\nStatus: ▰▰▰▱ Needs 1 more player to start");
+    expect(res.messageText).not.toContain("Waiting for");
+  });
+
+  test("without the joined wallets listed, the card counts the seats instead", async () => {
+    const res = await render({ ticketsCount: 1, seats: 4, getGameChallenge: () => THREE });
+
+    expect(res.messageText).toContain("\nStatus: ▰▱▱▱ Needs 3 more players to start");
     expect(res.messageText).not.toContain("Waiting for");
   });
 

@@ -146,9 +146,13 @@ export const resolveNamedChallenges = async (
   maxChallenged: number,
 ): Promise<NamedChallenges> => {
   // The same name typed twice is looked up and counted once.
-  const users = named.users.filter(
-    (user, index) => named.users.findIndex((other) => nameKey(other) === nameKey(user)) === index,
-  );
+  const keys = new Set<string>();
+  const users = named.users.filter((user) => {
+    const key = nameKey(user);
+    const isNew = !keys.has(key);
+    keys.add(key);
+    return isNew;
+  });
   // Counted before any lookup, so a long list costs no Telegram calls.
   if (users.length > maxChallenged) {
     return { refusal: tooManyChallengedMessage(maxChallenged) };
