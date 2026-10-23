@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, spyOn } from "bun:test";
+import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { PublicKey } from "#solana";
 import { GameManager } from "../src/utils/game";
 import { DEFAULT_NULL_ADDRESS } from "../src/utils/constants";
@@ -519,12 +519,31 @@ describe("GameManager.formatGameMessage for a challenge", () => {
     expect(res.messageText).toContain("\nStatus: ▰▰▰▱ Needs 1 more player to start");
   });
 
-  test("a lone challenged player is named as waiting until the challenge is accepted, as before", async () => {
-    for (const onChainPlayers of [undefined, { [WALLET.rival]: "5150" }]) {
-      const res = await render({ ticketsCount: 1, onChainPlayers });
+  test("a lone challenged player is named as waiting without reading who joined, as before", async () => {
+    for (const onChainPlayers of [undefined, { [WALLET.creator]: "4242" }]) {
+      const getPlayerTelegramId = mock((_publicKey: string): string | null => null);
+
+      const res = await render({ ticketsCount: 1, onChainPlayers, getPlayerTelegramId });
 
       expect(res.messageText).toContain(`\nStatus: Waiting for @${WORD_JOINER}rival to accept`);
+      expect(getPlayerTelegramId).not.toHaveBeenCalled();
     }
+  });
+
+  test("right after it opens, a challenge to several names everyone without reading who joined", async () => {
+    const getPlayerTelegramId = mock((_publicKey: string): string | null => null);
+
+    const res = await render({
+      ticketsCount: 1,
+      seats: 4,
+      getGameChallenge: () => THREE,
+      getPlayerTelegramId,
+    });
+
+    expect(res.messageText).toContain(
+      `\nStatus: Waiting for @${WORD_JOINER}rival, @${WORD_JOINER}bo and Cid to accept`,
+    );
+    expect(getPlayerTelegramId).not.toHaveBeenCalled();
   });
 
   test("a player list behind the joined count never names someone who already accepted", async () => {
@@ -539,10 +558,10 @@ describe("GameManager.formatGameMessage for a challenge", () => {
     expect(res.messageText).not.toContain("Waiting for");
   });
 
-  test("without the joined wallets listed, the card counts the seats instead", async () => {
-    const res = await render({ ticketsCount: 1, seats: 4, getGameChallenge: () => THREE });
+  test("once someone accepted, without the joined wallets listed the card counts the seats instead", async () => {
+    const res = await render({ ticketsCount: 2, seats: 4, getGameChallenge: () => THREE });
 
-    expect(res.messageText).toContain("\nStatus: ▰▱▱▱ Needs 3 more players to start");
+    expect(res.messageText).toContain("\nStatus: ▰▰▱▱ Needs 2 more players to start");
     expect(res.messageText).not.toContain("Waiting for");
   });
 

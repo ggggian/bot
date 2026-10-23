@@ -6,6 +6,7 @@ import { formatNameList } from "./game-ui";
 import { getTelegramUserDisplayName } from "./telegram-display";
 import {
   findNamedUsers,
+  normalizeUsername,
   resolveNamedUser,
   usernameVerificationFailedMessage,
   type NamedUser,
@@ -55,7 +56,8 @@ const namesUser = (named: Pick<NamedUser, "user" | "username">, user: User): boo
   named.user
     ? named.user.id === user.id
     : !!user.username &&
-      named.username?.replace(/^@/, "").toLowerCase() === user.username.toLowerCase();
+      !!named.username &&
+      normalizeUsername(named.username) === normalizeUsername(user.username);
 
 /**
  * Why a coinflip that replies to someone and also names someone cannot open, or
@@ -131,7 +133,7 @@ const tooManyChallengedMessage = (maxChallenged: number): string =>
   `You can challenge up to ${maxChallenged} ${maxChallenged === 1 ? "person" : "people"} at once.`;
 
 const nameKey = (named: Pick<NamedUser, "user" | "username">): string =>
-  named.user ? `id ${named.user.id}` : `@${named.username?.replace(/^@/, "").toLowerCase()}`;
+  named.user ? `id ${named.user.id}` : `@${normalizeUsername(named.username ?? "")}`;
 
 /**
  * A coinflip that names people challenges each of them, found one by one as

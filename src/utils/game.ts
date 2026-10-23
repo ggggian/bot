@@ -3246,29 +3246,15 @@ export class GameManager {
       }
     }
 
-    // A lone challenged player is who is missing until the challenge is accepted.
-    // Among several, names show only when every joined wallet is listed and the
-    // ones left add up to the seats left, so a player list that lags or a wallet
-    // the bot cannot place never names someone who already joined; otherwise the
-    // count is what is still true.
-    const joinedAddresses = (participantAddresses ?? []).slice(0, currentTickets);
-    const waiting =
-      challenge.length > 1 && !challengeAccepted
-        ? this.challengedWaiting(challenge, joinedAddresses)
-        : challenge;
-    const namesWaiting =
-      challenge.length === 1 ||
-      (joinedAddresses.length === currentTickets &&
-        waiting.length === challenge.length + 1 - currentTickets);
     const statusText =
-      challenge.length > 0 && (challengeAccepted || namesWaiting)
-        ? buildChallengeStatus(
+      (challenge.length > 0
+        ? this.challengeStatus(
+            challenge,
             challengeAccepted,
-            waiting.map((player) =>
-              escapeHtml(sanitizeTelegramDisplayNameWithoutMention(player.displayName)),
-            ),
+            currentTickets,
+            participantAddresses ?? [],
           )
-        : buildGameStatus(currentTickets, minTickets, maxTickets);
+        : null) ?? buildGameStatus(currentTickets, minTickets, maxTickets);
     const statusSection = !isCompleted ? `\nStatus: ${statusText}${expirationInfo}` : "";
 
     const composeMessage = (names: ParticipantDisplay[], omittedCount: number): string => {
@@ -3321,6 +3307,37 @@ export class GameManager {
       console.warn(`Failed to read challenge for ${gameAddress}:`, error);
       return [];
     }
+  }
+
+  /**
+   * The status of a challenge card, or null when who is still missing cannot be
+   * told and the count is what is still true. A coinflip's creator joins in the
+   * transaction that creates it, so until a second ticket every challenged player
+   * is missing. Past that, they are named only when the ones left add up to the
+   * seats left, so a player list that lags or a wallet the bot cannot place never
+   * names someone who already joined.
+   */
+  private challengeStatus(
+    challenge: ChallengedPlayer[],
+    accepted: boolean,
+    currentTickets: number,
+    participantAddresses: string[],
+  ): string | null {
+    const named = (players: ChallengedPlayer[]) =>
+      buildChallengeStatus(
+        accepted,
+        players.map((player) =>
+          escapeHtml(sanitizeTelegramDisplayNameWithoutMention(player.displayName)),
+        ),
+      );
+    if (accepted || currentTickets <= 1) {
+      return named(challenge);
+    }
+    const waiting = this.challengedWaiting(
+      challenge,
+      participantAddresses.slice(0, currentTickets),
+    );
+    return waiting.length === challenge.length + 1 - currentTickets ? named(waiting) : null;
   }
 
   /** The challenged players whose wallets are not among the game's participants. */

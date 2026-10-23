@@ -1075,7 +1075,9 @@ test("a challenge naming someone twice saves no one", () => {
     ["first_twice", [RIVAL, BO, RIVAL]],
     ["other_twice", [RIVAL, BO, BO]],
   ] as const) {
-    expect(() => db.saveGameChallenge(game, challenge)).toThrow();
+    expect(() => db.saveGameChallenge(game, challenge)).toThrow(
+      "A challenge names each player once",
+    );
     expect(db.getGameChallenge(game)).toEqual([]);
   }
 });

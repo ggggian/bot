@@ -520,6 +520,7 @@ describe("game handler: coinflip naming several people to challenge", () => {
     ["/cf @rival 100 @bo", ["/cf", "100"]],
     ["/cf 100 @rival TIMBA @bo", ["/cf", "100", "TIMBA"]],
     ["/cf 1 USD @rival @bo", ["/cf", "1", "USD"]],
+    ["/cf 100 @rival,@bo", ["/cf", "100"]],
   ])("%s challenges everyone named, in order, with the rest of the command", async (text, args) => {
     const ctx = groupContext(text);
     const { deps, created, lookups } = severalDeps();
@@ -539,6 +540,10 @@ describe("game handler: coinflip naming several people to challenge", () => {
     [
       "/cf 100 @ghost @rival",
       "I don't know who <code>@ghost</code> is. Reply to one of their messages to challenge them.",
+    ],
+    [
+      "/cf 100 @rival,usdc",
+      "I don't know who <code>@rival,usdc</code> is. Reply to one of their messages to challenge them.",
     ],
     ["/cf 100 @rival @alice", "You can't challenge yourself."],
     ["/cf 100 @rival @helper_bot", "You can't challenge a bot."],

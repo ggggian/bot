@@ -283,13 +283,13 @@ describe("findNamedUsers", () => {
     });
   });
 
-  test("a name Telegram did not mark, after a mention in the same word, is typed", () => {
+  test("names Telegram did not mark, beside a mention in the same word, are typed", () => {
+    const alice = { user: null, username: "@alice", label: "@alice" };
     for (const [text, users] of [
-      [
-        "/cf 1 @alice,@bo usdc",
-        [{ user: null, username: "@alice", label: "@alice" }, typed("@bo")],
-      ],
-      ["/cf 1 @alice, usdc", [{ user: null, username: "@alice", label: "@alice" }]],
+      ["/cf 1 @alice,@bo usdc", [alice, typed("@bo")]],
+      ["/cf 1 @bo@alice@cy usdc", [alice, typed("@bo"), typed("@cy")]],
+      ["/cf 1 @alice, usdc", [alice]],
+      ["/cf 1 @alice,@ usdc", [alice]],
     ] as const) {
       expect(findNamedUsers(command(text, [mention(text, "@alice")]))).toEqual({
         users: [...users],
@@ -299,6 +299,73 @@ describe("findNamedUsers", () => {
     }
   });
 
+  test("anything else in a word that names someone makes the whole word a name, never dropped", () => {
+    const text = "/cf 1 @alice,usdc";
+
+    expect(findNamedUsers(command(text, [mention(text, "@alice")]))).toEqual({
+      users: [{ user: null, username: "@alice", label: "@alice" }, typed("@alice,usdc")],
+      args: ["/cf", "1"],
+      positions: [0, 1],
+    });
+    expect(findNamedUsers(command("/cf 1 @ana's usdc"))?.users).toEqual([typed("@ana's")]);
+  });
+
+  test("typed names joined by a comma are each found", () => {
+    expect(findNamedUsers(command("/cf 1 @ana,@bob! usdc"))).toEqual({
+      users: [typed("@ana"), typed("@bob")],
+      args: ["/cf", "1", "usdc"],
+      positions: [0, 1, 3],
+    });
+  });
+
+  test("no word naming someone is dropped without every letter in it landing in a name", () => {
+    const handle = fc.stringMatching(/^[a-z][a-z0-9_]{4,15}$/);
+    const item = fc.oneof(
+      fc.record({ handle, marked: fc.boolean() }),
+      fc.constantFrom("usdc", "5", "x", "$1"),
+    );
+    fc.assert(
+      fc.property(
+        fc.array(fc.array(item, { minLength: 1, maxLength: 3 }), { minLength: 1, maxLength: 5 }),
+        fc.constantFrom(",", ", ", "!,"),
+        (groups, joiner) => {
+          const entities: unknown[] = [];
+          let text = "/cf";
+          for (const group of groups) {
+            text += " ";
+            group.forEach((value, index) => {
+              if (index > 0) text += joiner;
+              if (typeof value === "string") {
+                text += value;
+              } else {
+                if (value.marked) {
+                  entities.push({
+                    type: "mention",
+                    offset: text.length,
+                    length: value.handle.length + 1,
+                  });
+                }
+                text += `@${value.handle}`;
+              }
+            });
+          }
+
+          const found = findNamedUsers(command(text, entities));
+          const words = text.split(/\s+/);
+          const kept = new Set(found?.positions ?? words.map((_word, index) => index));
+          const names = (found?.users ?? []).map((user) => `${user.username} ${user.label}`);
+
+          words.forEach((word, position) => {
+            if (kept.has(position)) return;
+            for (const piece of word.match(/[\p{L}\p{N}_]+/gu) ?? []) {
+              expect(names.some((name) => name.includes(piece))).toBe(true);
+            }
+          });
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
   test("an @ inside a word nothing marks names no one", () => {
     expect(findNamedUsers(command("/cf 5 me@ana"))).toBeNull();
   });

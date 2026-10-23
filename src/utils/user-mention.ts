@@ -16,6 +16,10 @@ export type NamedUser = {
   positions: number[];
 };
 
+/** A username as Telegram compares them: without the "@" and in lower case. */
+export const normalizeUsername = (username: string): string =>
+  username.trim().replace(/^@/, "").toLowerCase();
+
 /** Looks people up by the usernames the bot has seen. Reading may throw. */
 export type UsernameDirectory = {
   findTelegramIdByUsername: (username: string) => string | null | undefined;
@@ -168,20 +172,31 @@ export const findNamedUser = (
 /** Everyone a command names, in the order they appear, and the words left. */
 export type NamedUsers = Pick<NamedUser, "args" | "positions"> & { users: NamedPerson[] };
 
-/** The characters an entity covers, or null when its offset cannot be used. */
-const entityRange = (entity: LooseEntity): { start: number; end: number } | null => {
+type Span = { start: number; end: number };
+
+/**
+ * The characters an entity covers, or null when it cannot be placed. Without a
+ * usable length it covers the word it starts in.
+ */
+const entityRange = (entity: LooseEntity, words: readonly Span[]): Span | null => {
   if (typeof entity.offset !== "number" || entity.offset < 0) {
     return null;
   }
-  const length = typeof entity.length === "number" && entity.length > 0 ? entity.length : 1;
-  return { start: entity.offset, end: entity.offset + length };
+  const start = entity.offset;
+  if (typeof entity.length === "number" && entity.length > 0) {
+    return { start, end: start + entity.length };
+  }
+  const word = words.find((span) => span.start <= start && start < span.end);
+  return word ? { start, end: word.end } : null;
 };
 
 /**
  * Finds everyone a command names: users picked from Telegram's mention list,
- * @username mentions and every other typed word starting with "@". A mention
- * may sit inside a word ("@ana,@bob"), so words are matched by the characters
- * mentions cover, and an "@" a word holds outside them is a typed name too.
+ * @username mentions and every other typed word starting with "@". A word may
+ * hold several names ("@ana,@bob"), so mentions are matched by the characters
+ * they cover, and the rest of a word that names someone must be typed names
+ * too: anything else ("@ana,usdc") makes the whole word a name no one has,
+ * never a word quietly dropped.
  */
 export const findNamedUsers = (
   message: Pick<Message, "text" | "entities"> | undefined,
@@ -199,7 +214,7 @@ export const findNamedUsers = (
     if (!person) {
       continue;
     }
-    const range = entityRange(entity);
+    const range = entityRange(entity, spans);
     const first = range
       ? spans.findIndex((span) => span.start < range.end && span.end > range.start)
       : -1;
@@ -214,25 +229,24 @@ export const findNamedUsers = (
 
   const removed = new Set<number>();
   spans.forEach((span, position) => {
-    if (position === 0) {
-      return;
-    }
+    const word = words[position]!;
     let unmarked = "";
     for (let index = span.start; index < span.end; index += 1) {
-      unmarked += marked.has(index) ? "" : text.charAt(index);
+      unmarked += marked.has(index) ? " " : text.charAt(index);
     }
-    // A word a mention covers is a name, and may hold a typed one after it.
-    const mentioned = unmarked !== words[position];
-    const at = mentioned ? unmarked.indexOf("@") : 0;
-    const typed = at === -1 ? "" : unmarked.slice(at);
-    if (isTypedName(typed, position)) {
-      found.push({ person: { user: null, username: typed, label: null }, position });
+    const mentioned = unmarked !== word;
+    if (position === 0 || (!mentioned && !isTypedName(word, position))) {
+      return;
     }
-    if (mentioned || isTypedName(typed, position)) {
-      removed.add(position);
+    const rest = unmarked
+      .split(/[^\p{L}\p{N}_@]+/u)
+      .filter((piece) => piece !== "" && piece !== "@");
+    const typed = rest.every((piece) => piece.startsWith("@")) ? rest : [word];
+    for (const username of typed) {
+      found.push({ person: { user: null, username, label: null }, position });
     }
+    removed.add(position);
   });
-
   if (found.length === 0) {
     return null;
   }
@@ -304,8 +318,7 @@ export const resolveNamedUser = async (
     if (!member || String(member.id) !== resolvedId) {
       return { kind: "verification_failed", username };
     }
-    const requested = username.trim().replace(/^@/, "").toLowerCase();
-    if (!member.username || member.username.toLowerCase() !== requested) {
+    if (!member.username || normalizeUsername(member.username) !== normalizeUsername(username)) {
       try {
         directory.invalidateUsernameMapping?.(username, resolvedId);
       } catch (error) {
