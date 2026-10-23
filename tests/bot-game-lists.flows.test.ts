@@ -92,6 +92,14 @@ describe("/help", () => {
       expect(reply.payload.text).toContain(command);
     }
   });
+
+  test("says a coinflip can challenge one or more people", async () => {
+    await sendText("/help", { userId: USER });
+
+    expect(lastCall("sendMessage")!.payload.text.split("\n")).toContain(
+      "/coinflip &lt;amount&gt; [token] [players]: Start a coinflip (or /cf); add one or more @users, or reply to someone, to challenge them",
+    );
+  });
 });
 
 describe("/settings", () => {
