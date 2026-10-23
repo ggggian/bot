@@ -17,6 +17,7 @@ import {
 } from "../src/utils/constants";
 import { contractCapabilities } from "../src/utils/contract-idl";
 import { decodeGameTransaction } from "../src/utils/game-transaction";
+import type { ChallengedPlayer } from "../src/utils/game-database";
 
 const TEST_ORACLE = await Keypair.generate();
 
@@ -2278,7 +2279,7 @@ describe("GameManager.createGame for a challenge", () => {
 
   const createChallenge = async (
     saveGameChallenge: (address: string, challenge: unknown) => void,
-    challenge: unknown[] = CHALLENGE,
+    challenge: ChallengedPlayer[] = CHALLENGE,
     seats = 2,
   ) => {
     resetGM();

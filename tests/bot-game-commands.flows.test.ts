@@ -230,12 +230,16 @@ describe("/coinflip naming who to challenge through the bot", () => {
   test("naming more than five people is refused to the sender alone and opens nothing", async () => {
     manager.findTelegramIdByUsername = mock(() => "5150");
 
-    await sendText("/cf 5 BONK @p1 @p2 @p3 @p4 @p5 @p6", { userId: USER, chatId: GROUP });
+    const command = await sendText("/cf 5 BONK @p1 @p2 @p3 @p4 @p5 @p6", {
+      userId: USER,
+      chatId: GROUP,
+    });
 
     expect(lastCall("sendMessage")?.payload).toEqual({
       chat_id: GROUP,
       text: "You can challenge up to 5 people at once.",
       parse_mode: "HTML",
+      reply_to_message_id: command,
       ephemeral_message_parameters: { receiver_user_id: USER },
     });
     expect(manager.findTelegramIdByUsername).not.toHaveBeenCalled();
