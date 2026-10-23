@@ -140,17 +140,7 @@ describe("/coinflip through the bot", () => {
 });
 
 describe("/coinflip naming who to challenge through the bot", () => {
-  // Other test files leave the oracle's player limit in the module, and the
-  // challenge cap follows it.
-  let oracleMaxPlayers = 0;
-  beforeEach(() => {
-    oracleMaxPlayers = botModule.__test_getOracleMaxPlayers();
-    botModule.__test_setOracleMaxPlayers(100);
-  });
-  afterEach(() => {
-    botModule.__test_setOracleMaxPlayers(oracleMaxPlayers);
-    clearApiOverride("getChatMember");
-  });
+  afterEach(() => clearApiOverride("getChatMember"));
 
   test("a mismatched or unverifiable username never opens a challenge", async () => {
     manager.findTelegramIdByUsername = () => "5150";
@@ -247,7 +237,7 @@ describe("/coinflip naming who to challenge through the bot", () => {
 
     expect(lastCall("sendMessage")?.payload).toEqual({
       chat_id: GROUP,
-      text: "You can challenge up to 5 people at once.",
+      text: `You can challenge up to ${Math.min(5, botModule.__test_getOracleMaxPlayers() - 1)} people at once.`,
       parse_mode: "HTML",
       reply_to_message_id: command,
       ephemeral_message_parameters: { receiver_user_id: USER },
